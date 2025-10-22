@@ -136,19 +136,39 @@ app.get("/api/debug/config", (req, res) => {
   try {
     const allowed = getAllowed();
     const dbmap = getDbMap();
-    const sampleId = dbmap["TEST국가"] || null;
+
+    // 최상위 국가 키
+    const countries = Object.keys(dbmap);
+
+    // 첫 번째 국가의 업체 목록 미리 보기 (없을 수도 있음)
+    const firstCountry = countries[0];
+    const companies = firstCountry ? Object.keys(dbmap[firstCountry]) : [];
+
+    // 샘플 ID (첫 국가의 첫 업체)
+    const sampleId =
+      firstCountry && companies.length > 0
+        ? dbmap[firstCountry][companies[0]]
+        : null;
+
     res.json({
       ok: true,
       env: { NOTION_TOKEN_PRESENT: Boolean(NOTION_TOKEN) },
       allowedTypes: allowed,
-      dbMapKeys: Object.keys(dbmap),
-      sampleDbId: sampleId,
+      dbStructure: dbmap,              // 전체 구조 미리 보기
+      countries,                       // ["미국", "중국", ...]
+      companiesByFirstCountry: companies, // 예: ["A업체", "B업체"]
+      sample: {
+        country: firstCountry || null,
+        company: companies[0] || null,
+        dbId: sampleId
+      },
       props: { TITLE_PROP, REGION_PROP, DIPLO_PROP, EXTRA_TEXT_PROP }
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 
 // 컬럼(속성) 목록
 // GET /api/notion/list-columns?country=TEST국가
@@ -158,8 +178,16 @@ app.get("/api/notion/list-columns", async (req, res) => {
     if (!country) return res.status(400).json({ ok: false, error: "country query is required" });
 
     const dbmap = getDbMap();
-    const dbid = dbmap[country];
-    if (!dbid) return res.status(404).json({ ok: false, error: `Unknown country: ${country}` });
+    const company = (req.query.company || "").trim(); // 회사명 A업체, B업체 ...
+    const dbid = dbmap[country]?.[company];
+    
+    if (!dbid) {
+      return res.status(404).json({
+        ok: false,
+        error: `Unknown country/company combination: ${country}/${company}`
+      });
+    }
+
 
     const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
       headers: notionHeaders()
@@ -197,8 +225,16 @@ app.get("/api/costs/:country", async (req, res) => {
       : []; // 없으면 외교유무 조건 없이 전체
 
     const dbmap = getDbMap();
-    const dbid = dbmap[country];
-    if (!dbid) return res.status(404).json({ ok: false, error: `Unknown country: ${country}` });
+    const company = (req.query.company || "").trim(); // 회사명 A업체, B업체 ...
+    const dbid = dbmap[country]?.[company];
+    
+    if (!dbid) {
+      return res.status(404).json({
+        ok: false,
+        error: `Unknown country/company combination: ${country}/${company}`
+      });
+    }
+
 
     // ---- Notion filter 구성
     const andFilters = [];
