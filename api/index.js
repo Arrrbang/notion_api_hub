@@ -312,6 +312,7 @@ app.get("/api/costs/:country", async (req, res) => {
     const values         = {};  // region 지정 시: { 항목: 값 }
     const extras         = {};  // region 지정 시: { 항목: "추가내용" }
     const valuesByRegion = {};  // region 미지정 시: { 지역: { 항목: 값 } }
+    const extrasByRegion = {};  // region 미지정 시: { 지역: { 항목: "추가내용" } }
     
     for (const page of results) {
       const props    = page.properties || {};
