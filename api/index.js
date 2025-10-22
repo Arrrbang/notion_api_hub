@@ -36,6 +36,51 @@ function safeLoadJson(relPathFromRoot) {
   }
 }
 
+// HTML 이스케이프
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[m]));
+}
+
+// 🧩 노션의 rich_text → HTML 변환
+function notionRichToHtml(richTexts = []) {
+  return richTexts.map(rt => {
+    let t = escapeHtml(rt.text?.content || "");
+    const ann = rt.annotations || {};
+
+    // 스타일 변환
+    if (ann.bold) t = `<b>${t}</b>`;
+    if (ann.italic) t = `<i>${t}</i>`;
+    if (ann.underline) t = `<u>${t}</u>`;
+    if (ann.strikethrough) t = `<s>${t}</s>`;
+    if (ann.code) t = `<code>${t}</code>`;
+
+    // 색상 적용
+    if (ann.color && ann.color !== "default") {
+      const colorMap = {
+        red: "#dc2626", orange: "#ea580c", yellow: "#ca8a04",
+        green: "#16a34a", blue: "#2563eb", purple: "#7c3aed",
+        pink: "#db2777", gray: "#6b7280"
+      };
+      const htmlColor = colorMap[ann.color] || ann.color;
+      t = `<span style="color:${htmlColor}">${t}</span>`;
+    }
+
+    // 링크 처리
+    if (rt.text?.link?.url) {
+      const url = rt.text.link.url;
+      t = `<a href="${url}" target="_blank" rel="noopener noreferrer">${t}</a>`;
+    }
+
+    return t;
+  }).join("");
+}
+
 function getAllowed() {
   if (process.env.ALLOWED_TYPES_JSON) {
     try { return JSON.parse(process.env.ALLOWED_TYPES_JSON); } catch {}
@@ -267,15 +312,14 @@ app.get("/api/costs/:country", async (req, res) => {
     const values         = {};  // region 지정 시: { 항목: 값 }
     const extras         = {};  // region 지정 시: { 항목: "추가내용" }
     const valuesByRegion = {};  // region 미지정 시: { 지역: { 항목: 값 } }
-    const extrasByRegion = {};  // region 미지정 시: { 지역: { 항목: "추가내용" } }
-
+    
     for (const page of results) {
       const props    = page.properties || {};
       const itemName = extractTitle(props);                   // "이름" (title)
       if (!itemName) continue;
 
       const regionVal = getSelectName(props, REGION_PROP);    // A지역/B지역 …
-      const extraVal  = getExtraText(props, EXTRA_TEXT_PROP); // 추가내용
+      const extraVal  = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []); // ✅ 서식 반영된 추가내용
       const numVal    = pickNumber(valueFromColumn(props, type));
 
       // 전체 스냅샷(프런트/디버깅용)
