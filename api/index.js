@@ -307,46 +307,45 @@ app.get("/api/costs/:country", async (req, res) => {
 
     const results = q.data.results || [];
 
-    // 응답 구조
+    // ── 응답 구조 
     const rows = [];
-    const values         = {};  // region 지정 시: { 항목: 값 }
-    const extras         = {};  // region 지정 시: { 항목: "추가내용" }
-    const valuesByRegion = {};  // region 미지정 시: { 지역: { 항목: 값 } }
-    const extrasByRegion = {};  // region 미지정 시: { 지역: { 항목: "추가내용" } }
+    const values         = {};
+    const extras         = {};
+    const valuesByRegion = {};
+    const extrasByRegion = {}; // ← 반드시 선언!
     
+    // ── for문 내부 전체 (교체) ──
     for (const page of results) {
       const props    = page.properties || {};
-      const itemName = extractTitle(props);                   // "이름" (title)
+      const itemName = extractTitle(props);
       if (!itemName) continue;
-
-      const regionVal = getSelectName(props, REGION_PROP);    // A지역/B지역 …
-      const extraVal  = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []); // ✅ 서식 반영된 추가내용
-      const numVal    = pickNumber(valueFromColumn(props, type));
-
-      // 전체 스냅샷(프런트/디버깅용)
-      const rowObj = { item: itemName, region: regionVal, extra: extraVal };
+    
+      const regionName = getSelectName(props, REGION_PROP);   // 실제 노션 값(A지역/B지역/빈값)
+      const regionKey  = regionName || "기타";                 // 그룹핑/버킷용 키
+      const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
+      const numVal     = pickNumber(valueFromColumn(props, type));
+    
+      // 디버깅/프런트 스냅샷(표시에는 실제 값 사용: 빈값이면 null)
+      const rowObj = { item: itemName, region: regionName, extra: extraVal };
       for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
-      // 외교유무 값도 참고용으로 넣고 싶다면 다음 줄 주석 해제:
-      // rowObj.roles = getMultiSelectNames(props, DIPLO_PROP);
+      // rowObj.roles = getMultiSelectNames(props, DIPLO_PROP); // 필요 시 해제
       rows.push(rowObj);
-
-      // 지역 필터링 유연 처리
-      const regionVal = getSelectName(props, REGION_PROP) || "기타"; // 지역이 없을 때 "기타"로 표시
-      
+    
       if (region) {
-        // ✅ 특정 지역 선택 시에도 지역값이 비어있는 행(기타)은 항상 포함
-        if (regionVal === region || regionVal === "기타") {
+        // ✅ 특정 지역 선택 시에도 "지역 미기입" 행은 항상 포함
+        if (!regionName || regionName === region) {
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
       } else {
-        // ✅ 지역 미선택 시 전체 그룹화 (비어있는 지역은 "기타"로 묶기)
-        if (!valuesByRegion[regionVal]) valuesByRegion[regionVal] = {};
-        if (!extrasByRegion[regionVal]) extrasByRegion[regionVal] = {};
-        valuesByRegion[regionVal][itemName] = numVal;
-        extrasByRegion[regionVal][itemName] = extraVal ?? null;
+        // ✅ 지역 미선택 시: 미기입 행은 "기타"로 묶음
+        if (!valuesByRegion[regionKey]) valuesByRegion[regionKey] = {};
+        if (!extrasByRegion[regionKey]) extrasByRegion[regionKey] = {};
+        valuesByRegion[regionKey][itemName] = numVal;
+        extrasByRegion[regionKey][itemName] = extraVal ?? null;
       }
     }
+
 
     setCache(res);
     res.json({
