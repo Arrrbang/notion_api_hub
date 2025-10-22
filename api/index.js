@@ -284,8 +284,15 @@ app.get("/api/costs/:country", async (req, res) => {
     // ---- Notion filter 구성
     const andFilters = [];
     if (region) {
-      andFilters.push({ property: REGION_PROP, select: { equals: region } });
+      andFilters.push({
+        or: [
+          { property: REGION_PROP, select: { equals: region } },
+          { property: REGION_PROP, select: { is_empty: true } }
+        ]
+      });
     }
+    
+    // 외교유무 필터(기존 그대로)
     if (roles.length === 1) {
       andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
     } else if (roles.length > 1) {
@@ -293,7 +300,7 @@ app.get("/api/costs/:country", async (req, res) => {
         or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } }))
       });
     }
-
+    
     const body = { page_size: 100 };
     if (andFilters.length === 1) body.filter = andFilters[0];
     else if (andFilters.length > 1) body.filter = { and: andFilters };
@@ -332,13 +339,14 @@ app.get("/api/costs/:country", async (req, res) => {
       rows.push(rowObj);
     
       if (region) {
-        // ✅ 특정 지역 선택 시에도 "지역 미기입" 행은 항상 포함
+        // 지역이 비어있거나 선택한 지역이면 포함
         if (!regionName || regionName === region) {
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
       } else {
-        // ✅ 지역 미선택 시: 미기입 행은 "기타"로 묶음
+        // 그룹핑 시 공란은 "기타"로 묶기
+        const regionKey = regionName || "기타";
         if (!valuesByRegion[regionKey]) valuesByRegion[regionKey] = {};
         if (!extrasByRegion[regionKey]) extrasByRegion[regionKey] = {};
         valuesByRegion[regionKey][itemName] = numVal;
