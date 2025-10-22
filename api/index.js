@@ -330,12 +330,17 @@ app.get("/api/costs/:country", async (req, res) => {
       // rowObj.roles = getMultiSelectNames(props, DIPLO_PROP);
       rows.push(rowObj);
 
+      // 지역 필터링 유연 처리
+      const regionVal = getSelectName(props, REGION_PROP) || "기타"; // 지역이 없을 때 "기타"로 표시
+      
       if (region) {
-        // 단일 지역 필터 시 평면 구조
-        values[itemName] = numVal;
-        extras[itemName] = extraVal ?? null;
+        // ✅ 특정 지역 선택 시에도 지역값이 비어있는 행(기타)은 항상 포함
+        if (regionVal === region || regionVal === "기타") {
+          values[itemName] = numVal;
+          extras[itemName] = extraVal ?? null;
+        }
       } else {
-        // 지역 미지정 시 지역별 그룹 구조
+        // ✅ 지역 미선택 시 전체 그룹화 (비어있는 지역은 "기타"로 묶기)
         if (!valuesByRegion[regionVal]) valuesByRegion[regionVal] = {};
         if (!extrasByRegion[regionVal]) extrasByRegion[regionVal] = {};
         valuesByRegion[regionVal][itemName] = numVal;
