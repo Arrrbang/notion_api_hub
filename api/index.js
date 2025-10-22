@@ -4,6 +4,7 @@ const axios = require("axios");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const EXTRA_TEXT_PROP = process.env.EXTRA_TEXT_PROP || "추가내용";
 
 const app = express();
 app.use(cors());
@@ -138,6 +139,7 @@ app.get("/api/notion/list-columns", async (req, res) => {
 // 비용 조회 (Select 필터 지원)
 // GET /api/costs/:country?type=20FT&pick=A지역
 app.get("/api/costs/:country", async (req, res) => {
+app.get("/api/costs/:country", async (req, res) => {
   try {
     const country = req.params.country;
     const allowed = getAllowed();
@@ -145,20 +147,26 @@ app.get("/api/costs/:country", async (req, res) => {
     const typeParam = (req.query.type || "").trim();
     const type = typeParam || allowed[0];
     if (!allowed.includes(type)) {
-      return res.status(400).json({ ok: false, error: `Invalid type. Use one of: ${allowed.join(", ")}` });
+      return res
+        .status(400)
+        .json({ ok: false, error: `Invalid type. Use one of: ${allowed.join(", ")}` });
     }
 
-    const pick = (req.query.pick || req.query.select || "").trim(); // ← A지역 / B지역 등
+    // A지역 / B지역 등 선택 속성으로 필터
+    const pick = (req.query.pick || req.query.select || "").trim();
+
     const dbmap = getDbMap();
     const dbid = dbmap[country];
-    if (!dbid) return res.status(404).json({ ok: false, error: `Unknown country: ${country}` });
+    if (!dbid) {
+      return res.status(404).json({ ok: false, error: `Unknown country: ${country}` });
+    }
 
-    // Notion query body: pick(지역)이 있으면 select equals 필터 적용
+    // Notion query body 구성
     const body = { page_size: 100 };
     if (pick) {
       body.filter = {
-        property: "지역",          // ← 노션에서 '선택' 속성 이름 그대로
-        select: { equals: pick }   //    A지역 / B지역
+        property: "선택",          // ← 노션 Select 속성명이 "선택"이어야 함
+        select: { equals: pick }
       };
     }
 
@@ -169,35 +177,48 @@ app.get("/api/costs/:country", async (req, res) => {
     );
 
     const results = q.data.results || [];
-    const values = {};
+
     const rows = [];
-    const valuesBySelect = {}; // pick이 없으면 지역별로 그룹핑해서 반환
+    const values = {};               // (pick 있을 때) { 항목: 숫자 }
+    const extras = {};               // (pick 있을 때) { 항목: "추가내용" }
+
+    const valuesBySelect = {};       // (pick 없을 때) { 지역: { 항목: 숫자 } }
+    const extrasBySelect = {};       // (pick 없을 때) { 지역: { 항목: "추가내용" } }
 
     // select 값 읽기 유틸
     const getSelect = (props) => {
-      const s = props?.["지역"];
+      const s = props?.["선택"];
       return (s && s.type === "select" && s.select && s.select.name) ? s.select.name : null;
     };
 
     for (const page of results) {
       const props = page.properties || {};
-      const itemName = extractTitle(props); // (이름 title)
+      const itemName = extractTitle(props); // "이름" title
       if (!itemName) continue;
 
-      const selectName = getSelect(props); // A지역/B지역…
+      const selectName = getSelect(props);  // A지역 / B지역 …
+      const extraText = valueFromColumn(props, EXTRA_TEXT_PROP); // "추가내용"
 
-      // 전체 행 스냅샷
-      const rowObj = { item: itemName, select: selectName };
-      for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
+      // 전체 스냅샷 행
+      const rowObj = { item: itemName, select: selectName, extra: extraText };
+      for (const key of allowed) {
+        rowObj[key] = pickNumber(valueFromColumn(props, key));
+      }
       rows.push(rowObj);
 
-      // ① pick이 지정된 경우: 평면 values (기존과 동일)
+      // 타입별 값
+      const val = pickNumber(valueFromColumn(props, type));
+
       if (pick) {
-        values[itemName] = pickNumber(valueFromColumn(props, type));
+        // 평면 구조
+        values[itemName] = val;
+        extras[itemName] = extraText ?? null;
       } else {
-        // ② pick이 없는 경우: 지역별로 묶어서 반환
+        // 지역별 그룹 구조
         if (!valuesBySelect[selectName]) valuesBySelect[selectName] = {};
-        valuesBySelect[selectName][itemName] = pickNumber(valueFromColumn(props, type));
+        if (!extrasBySelect[selectName]) extrasBySelect[selectName] = {};
+        valuesBySelect[selectName][itemName] = val;
+        extrasBySelect[selectName][itemName] = extraText ?? null;
       }
     }
 
@@ -207,10 +228,10 @@ app.get("/api/costs/:country", async (req, res) => {
       country,
       type,
       ...(pick
-        ? { pick, values }                         // 예: { "CDS":1, "THC":6, "DRC":11 }
-        : { valuesBySelect }                       // 예: { "A지역":{...}, "B지역":{...} }
+        ? { pick, values, extras }                         // ← A지역만 요청했을 때
+        : { valuesBySelect, extrasBySelect }               // ← 전체(지역별 그룹)
       ),
-      rows,                                         // 스냅샷(선택값 포함)
+      rows,
       servedAt: new Date().toISOString()
     });
   } catch (e) {
