@@ -4,7 +4,6 @@ const axios = require("axios");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const EXTRA_TEXT_PROP = process.env.EXTRA_TEXT_PROP || "추가내용";
 
 const app = express();
 app.use(cors());
@@ -135,6 +134,8 @@ app.get("/api/notion/list-columns", async (req, res) => {
     res.status(500).json({ ok: false, error: "list-columns failed", details });
   }
 });
+
+const EXTRA_TEXT_PROP = process.env.EXTRA_TEXT_PROP || "추가내용";
 
 // 비용 조회 (Select 필터 지원)
 // GET /api/costs/:country?type=20FT&pick=A지역
