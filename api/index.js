@@ -22,7 +22,10 @@ const TITLE_PROP        = process.env.TITLE_PROP        || "이름";     // titl
 const REGION_PROP       = process.env.REGION_PROP       || "지역";     // select
 const DIPLO_PROP        = process.env.DIPLO_PROP        || "외교유무"; // multi_select
 const EXTRA_TEXT_PROP   = process.env.EXTRA_TEXT_PROP   || "추가내용"; // rich_text/text
-const ORDER_PROP = process.env.ORDER_PROP || "순서"; // 숫자(Number) 속성 이름
+const ORDER_PROP        = process.env.ORDER_PROP        || "순서"; // 숫자(Number) 속성 이름
+const MIN_CBM_PROP      = process.env.MIN_CBM_PROP      || "MIN CBM";
+const PER_CBM_PROP      = process.env.PER_CBM_PROP      || "PER CBM";
+const MIN_COST_PROP     = process.env.MIN_COST_PROP     || "MIN COST";
 
 
 // ───────────────────────────────────────────────────────────
@@ -168,6 +171,40 @@ const getExtraText = (props, key) => {
   return null;
 };
 
+function getNumberProp(props, key) {
+  const col = props?.[key];
+  if (!col) return null;
+  if (col.type === "number") return pickNumber(col.number);
+  if (col.type === "formula") return pickNumber(col.formula?.[col.formula?.type] ?? null);
+  if (col.type === "rich_text") {
+    const s = (col.rich_text || []).map(t => t.plain_text || "").join("").trim();
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// MIN CBM / PER CBM / MIN COST 삼형제가 있는지
+function hasCbmTriplet(props) {
+  const minCbm  = getNumberProp(props, MIN_CBM_PROP);
+  const perCbm  = getNumberProp(props, PER_CBM_PROP);
+  const minCost = getNumberProp(props, MIN_COST_PROP);
+  return (minCbm != null && perCbm != null && minCost != null);
+}
+
+// 실제 요금 계산: MIN COST + max(0, CBM - MIN CBM) * PER CBM
+function computeConsoleCost(props, cbmInput) {
+  const minCbm  = getNumberProp(props, MIN_CBM_PROP);
+  const perCbm  = getNumberProp(props, PER_CBM_PROP);
+  const minCost = getNumberProp(props, MIN_COST_PROP);
+  if (minCbm == null || perCbm == null || minCost == null) return null;
+
+  const effCbm = Number.isFinite(cbmInput) ? cbmInput : minCbm; // CBM 미지정 시 최소값으로
+  const diff   = Math.max(0, effCbm - minCbm);
+  return pickNumber(minCost + diff * perCbm);
+}
+
+
 // ───────────────────────────────────────────────────────────
 // Routes
 // ───────────────────────────────────────────────────────────
@@ -258,23 +295,27 @@ app.get("/api/costs/:country", async (req, res) => {
     const allowed = getAllowed();
 
     const typeParam = (req.query.type || "").trim();
+    const region = (req.query.region || req.query.pick || req.query.select || "").trim();
+    const rolesStr = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
+    const roles = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
+
+    // ✅ CBM 쿼리값 (정수)
+    const cbmQ = Number(req.query.cbm);
+    const cbm = Number.isFinite(cbmQ) ? cbmQ : null;
+
+    // type 검증: CONSOLE 은 허용(계산용), 그 외는 allowed에 있어야 함
     const type = typeParam || allowed[0];
-    if (!allowed.includes(type)) {
-      return res.status(400).json({ ok: false, error: `Invalid type. Use one of: ${allowed.join(", ")}` });
+    if (type !== "CONSOLE" && !allowed.includes(type)) {
+      return res.status(400).json({
+        ok: false,
+        error: `Invalid type. Use one of: CONSOLE, ${allowed.join(", ")}`
+      });
     }
 
-    const region = (req.query.region || req.query.pick || req.query.select || "").trim();
-
-    // roles: "DIPLOMAT,NON-DIPLOMAT" → 배열
-    const rolesStr = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
-    const roles = rolesStr
-      ? rolesStr.split(",").map(s => s.trim()).filter(Boolean)
-      : []; // 없으면 외교유무 조건 없이 전체
-
+    // --- DB 조회
     const dbmap = getDbMap();
-    const company = (req.query.company || "").trim(); // 회사명 A업체, B업체 ...
+    const company = (req.query.company || "").trim();
     const dbid = dbmap[country]?.[company];
-    
     if (!dbid) {
       return res.status(404).json({
         ok: false,
@@ -282,8 +323,7 @@ app.get("/api/costs/:country", async (req, res) => {
       });
     }
 
-
-    // ---- Notion filter 구성
+    // --- Notion 필터 구성
     const andFilters = [];
     if (region) {
       andFilters.push({
@@ -293,93 +333,90 @@ app.get("/api/costs/:country", async (req, res) => {
         ]
       });
     }
-    
-    // 외교유무 필터(기존 그대로)
     if (roles.length === 1) {
       andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
     } else if (roles.length > 1) {
-      andFilters.push({
-        or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } }))
-      });
+      andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
     }
-    
+
     const body = { page_size: 100 };
     if (andFilters.length === 1) body.filter = andFilters[0];
     else if (andFilters.length > 1) body.filter = { and: andFilters };
-
     body.sorts = [{ property: ORDER_PROP, direction: "ascending" }];
-    
-    // ---- 쿼리 실행
+
     const q = await axios.post(
       `https://api.notion.com/v1/databases/${dbid}/query`,
       body,
       { headers: notionHeaders() }
     );
-
     const results = q.data.results || [];
 
-    // ── 응답 구조 
+    // --- 응답 구조
     const rows = [];
-    const values         = {};
-    const extras         = {};
+    const values = {};
+    const extras = {};
     const valuesByRegion = {};
-    const extrasByRegion = {}; // ← 반드시 선언!
-    
-    // ── for문 내부 전체 (교체) ──
+    const extrasByRegion = {};
+
     for (const page of results) {
-      const props    = page.properties || {};
+      const props = page.properties || {};
       const itemName = extractTitle(props);
       if (!itemName) continue;
-    
-      const regionName = getSelectName(props, REGION_PROP);   // 실제 노션 값(A지역/B지역/빈값)
-      const regionKey  = regionName || "기타";                 // 그룹핑/버킷용 키
-      const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
-      const numVal     = pickNumber(valueFromColumn(props, type));
-    
-      // 디버깅/프런트 스냅샷(표시에는 실제 값 사용: 빈값이면 null)
+
+      const regionName = getSelectName(props, REGION_PROP);
+      const extraVal = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
+
+      // 1️⃣ 기본값: 선택된 type(20FT/40HC)
+      let numVal = (type === "CONSOLE")
+        ? null
+        : pickNumber(valueFromColumn(props, type));
+
+      // 2️⃣ CONSOLE 모드이거나, 20FT·40HC 값이 없고 삼형제가 존재하면 CBM 계산
+      if (type === "CONSOLE" || ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))) {
+        numVal = computeConsoleCost(props, cbm);
+      }
+
+      // --- rows 구성
       const rowObj = { item: itemName, region: regionName, extra: extraVal };
       for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
-      // rowObj.roles = getMultiSelectNames(props, DIPLO_PROP); // 필요 시 해제
+      rowObj["MIN CBM"]  = getNumberProp(props, MIN_CBM_PROP);
+      rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
+      rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
+      rowObj[type] = numVal;
       rows.push(rowObj);
-    
+
+      // --- region 그룹 반영
       if (region) {
-        // 지역이 비어있거나 선택한 지역이면 포함
         if (!regionName || regionName === region) {
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
       } else {
-        // 그룹핑 시 공란은 "기타"로 묶기
-        const regionKey = regionName || "기타";
-        if (!valuesByRegion[regionKey]) valuesByRegion[regionKey] = {};
-        if (!extrasByRegion[regionKey]) extrasByRegion[regionKey] = {};
-        valuesByRegion[regionKey][itemName] = numVal;
-        extrasByRegion[regionKey][itemName] = extraVal ?? null;
+        const key = regionName || "기타";
+        if (!valuesByRegion[key]) valuesByRegion[key] = {};
+        if (!extrasByRegion[key]) extrasByRegion[key] = {};
+        valuesByRegion[key][itemName] = numVal;
+        extrasByRegion[key][itemName] = extraVal ?? null;
       }
     }
-
 
     setCache(res);
     res.json({
       ok: true,
       country,
       type,
-      filters: {
-        region: region || null,
-        roles: roles.length ? roles : null
-      },
-      ...(region
-        ? { values, extras }                   // 예: { "CDS": 1, "THC": 6, "DRC": 11 }, { "CDS":"메모", ... }
-        : { valuesByRegion, extrasByRegion }   // 예: { "A지역": {...}, "B지역": {...} } 및 동일 구조 extras
-      ),
+      filters: { region: region || null, roles: roles.length ? roles : null, cbm },
+      ...(region ? { values, extras } : { valuesByRegion, extrasByRegion }),
       rows,
       servedAt: new Date().toISOString()
     });
+
   } catch (e) {
     const details = e.response?.data || e.message || e.toString();
     res.status(500).json({ ok: false, error: "costs failed", details });
   }
 });
+
 
 // ───────────────────────────────────────────────────────────
 // Export (Vercel @vercel/node용)
