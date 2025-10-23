@@ -1,9 +1,11 @@
 [
   "외교유무",
   "지역",
+  "순서",
   "20FT",
   "40HC",
   "MIN CBM",
+  "MIN COST",
   "PER CBM",
   "FIXED",
   "추가내용"
