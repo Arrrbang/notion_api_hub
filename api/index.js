@@ -55,7 +55,7 @@ function escapeHtml(s) {
 // 🧩 노션의 rich_text → HTML 변환
 function notionRichToHtml(richTexts = []) {
   return richTexts.map(rt => {
-    let t = escapeHtml(rt.text?.content || "");
+    let t = escapeHtml(rt.text?.content || "").replace(/\n/g, "<br>"); // ← 줄바꿈 보존
     const ann = rt.annotations || {};
 
     // 스타일 변환
