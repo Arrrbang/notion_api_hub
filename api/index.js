@@ -22,6 +22,8 @@ const TITLE_PROP        = process.env.TITLE_PROP        || "이름";     // titl
 const REGION_PROP       = process.env.REGION_PROP       || "지역";     // select
 const DIPLO_PROP        = process.env.DIPLO_PROP        || "외교유무"; // multi_select
 const EXTRA_TEXT_PROP   = process.env.EXTRA_TEXT_PROP   || "추가내용"; // rich_text/text
+const ORDER_PROP = process.env.ORDER_PROP || "순서"; // 숫자(Number) 속성 이름
+
 
 // ───────────────────────────────────────────────────────────
 // Utils: 안전한 JSON 로더(지연 로드)
@@ -305,6 +307,8 @@ app.get("/api/costs/:country", async (req, res) => {
     if (andFilters.length === 1) body.filter = andFilters[0];
     else if (andFilters.length > 1) body.filter = { and: andFilters };
 
+    body.sorts = [{ property: ORDER_PROP, direction: "ascending" }];
+    
     // ---- 쿼리 실행
     const q = await axios.post(
       `https://api.notion.com/v1/databases/${dbid}/query`,
