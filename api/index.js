@@ -204,6 +204,19 @@ function computeConsoleCost(props, cbmInput) {
   return pickNumber(minCost + diff * perCbm);
 }
 
+  // 📦 DB 메타에서 숫자 컬럼의 포맷(dollar, won, euro...)만 추출
+  function extractNumberFormats(meta) {
+    const props = meta?.data?.properties || {};
+    const formats = {};
+    for (const [key, def] of Object.entries(props)) {
+      if (def?.type === "number" && def.number?.format) {
+        formats[key] = def.number.format; // e.g., "dollar", "won", "euro"
+      }
+      // 참고: formula → number 결과는 컬럼 포맷이 없음(표시 형식은 프론트에서 결정)
+    }
+    return formats;
+  }
+
 
 // ───────────────────────────────────────────────────────────
 // Routes
@@ -272,14 +285,14 @@ app.get("/api/notion/list-columns", async (req, res) => {
       });
     }
 
-
     const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
       headers: notionHeaders()
     });
 
     const columns = Object.keys(meta.data.properties || {});
+    const numberFormats = extractNumberFormats(meta);
     setCache(res);
-    res.json({ ok: true, country, columns });
+    res.json({ ok: true, country, columns, numberFormats });
   } catch (e) {
     const details = e.response?.data || e.message || e.toString();
     res.status(500).json({ ok: false, error: "list-columns failed", details });
@@ -323,6 +336,14 @@ app.get("/api/costs/:country", async (req, res) => {
       });
     }
 
+    
+  // ✅ (신규) DB 메타 읽어서 숫자 컬럼 포맷 추출
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
+    headers: notionHeaders()
+    });
+    const numberFormats = extractNumberFormats(meta);
+
+  
     // --- Notion 필터 구성
     const andFilters = [];
     if (region) {
@@ -406,6 +427,8 @@ app.get("/api/costs/:country", async (req, res) => {
       country,
       type,
       filters: { region: region || null, roles: roles.length ? roles : null, cbm },
+      // ✅ (신규) 컬럼별 숫자 포맷 제공: { "20FT": "dollar", "40HC": "dollar", "MIN COST": "won", ... }
+      numberFormats,
       ...(region ? { values, extras } : { valuesByRegion, extrasByRegion }),
       rows,
       servedAt: new Date().toISOString()
