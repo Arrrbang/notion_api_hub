@@ -26,7 +26,7 @@ const ORDER_PROP        = process.env.ORDER_PROP        || "순서"; // 숫자(N
 const MIN_CBM_PROP      = process.env.MIN_CBM_PROP      || "MIN CBM";
 const PER_CBM_PROP      = process.env.PER_CBM_PROP      || "PER CBM";
 const MIN_COST_PROP     = process.env.MIN_COST_PROP     || "MIN COST";
-
+const POE_PROP         = process.env.POE_PROP           || "POE";
 
 // ───────────────────────────────────────────────────────────
 // Utils: 안전한 JSON 로더(지연 로드)
@@ -478,11 +478,11 @@ app.get("/api/regions/:country", async (req, res) => {
 // 지역 → 업체 필터링: 해당 지역을 '지원하는' 업체 리스트
 // mode=options (기본): DB 옵션에 지역이 있으면 포함
 // mode=data: 실제로 지역=값 인 페이지가 1행 이상 존재하면 포함
-app.get("/api/companies/by-region", async (req, res) => {
+app.get("/api/poe/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
-    const mode    = (req.query.mode    || "options").trim(); // options | data
+    const mode    = (req.query.mode    || "data").trim(); // 기본 data
 
     if (!country || !region) {
       return res.status(400).json({ ok: false, error: "country and region are required" });
@@ -491,54 +491,57 @@ app.get("/api/companies/by-region", async (req, res) => {
     const dbmap = getDbMap();
     const companies = Object.keys(dbmap[country] || {});
     if (!companies.length) {
-      return res.json({ ok: true, country, region, mode, companies: [] });
+      return res.json({ ok: true, country, region, mode, poes: [] });
     }
 
+    // 결과 모을 Set (중복 제거)
+    const poeSet = new Set();
+
     if (mode === "options") {
-      // 빠른 경로: DB 메타의 지역 옵션에 region이 존재?
+      // 각 DB 메타에서 POE select 옵션 전체 모으기 (빠름)
       const tasks = companies.map(async (company) => {
         const dbid = dbmap[country][company];
         try {
           const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
             headers: notionHeaders()
           });
-          const prop = meta.data.properties?.[REGION_PROP];
+          const prop = meta.data.properties?.[POE_PROP];
           const names = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name) : []);
-          return names.includes(region) ? company : null;
-        } catch {
-          return null;
-        }
+          names.forEach(name => name && poeSet.add(name));
+        } catch {}
       });
-
-      const results = (await Promise.all(tasks)).filter(Boolean);
-      setCache(res);
-      return res.json({ ok: true, country, region, mode, companies: results });
+      await Promise.all(tasks);
+    } else {
+      // data 모드: 실제 region=값인 페이지들에서 POE(select.name)만 모으기
+      const tasks = companies.map(async (company) => {
+        const dbid = dbmap[country][company];
+        try {
+          const body = {
+            page_size: 100,
+            filter: { property: REGION_PROP, select: { equals: region } },
+            sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+          };
+          const q = await axios.post(
+            `https://api.notion.com/v1/databases/${dbid}/query`,
+            body,
+            { headers: notionHeaders() }
+          );
+          const results = q.data.results || [];
+          for (const page of results) {
+            const props = page.properties || {};
+            const poe = (props?.[POE_PROP]?.type === "select") ? props[POE_PROP].select?.name : null;
+            if (poe) poeSet.add(poe);
+          }
+        } catch {}
+      });
+      await Promise.all(tasks);
     }
 
-    // 정확한 경로: 실제 데이터에 지역=region 또는 (원하면 공란 포함) 존재?
-    // 공란도 ‘포함’하고 싶다면 아래 filter를 or:[ equals, is_empty ] 로 바꿔주세요.
-    const tasks = companies.map(async (company) => {
-      const dbid = dbmap[country][company];
-      try {
-        const body = {
-          page_size: 1,
-          filter: { property: REGION_PROP, select: { equals: region } }
-        };
-        const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, {
-          headers: notionHeaders()
-        });
-        return (q.data.results || []).length ? company : null;
-      } catch {
-        return null;
-      }
-    });
-
-    const results = (await Promise.all(tasks)).filter(Boolean);
+    const list = [...poeSet];
     setCache(res);
-    res.json({ ok: true, country, region, mode: "data", companies: results });
-
+    res.json({ ok: true, country, region, mode, count: list.length, poes: list });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "companies-by-region failed", details: e.message || String(e) });
+    res.status(500).json({ ok: false, error: "poe-by-region failed", details: e.message || String(e) });
   }
 });
 
