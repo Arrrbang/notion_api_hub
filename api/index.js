@@ -1,5 +1,5 @@
 // api/index.js
-// CommonJS + Express + @vercel/node (vercel.json routes/builds 기준)
+// CommonJS + Express + @vercel/node
 
 const express = require("express");
 const axios = require("axios");
@@ -11,79 +11,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ───────────────────────────────────────────────────────────
-// ENV / 상수
-// ───────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────
+   ENV / 상수
+────────────────────────────────────────────────────────── */
 const NOTION_TOKEN      = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 600);
 
 // 노션 속성명(필요시 Vercel 환경변수로 변경 가능)
 const TITLE_PROP        = process.env.TITLE_PROP        || "이름";     // title
 const REGION_PROP       = process.env.REGION_PROP       || "지역";     // select
-const DIPLO_PROP        = process.env.DIPLO_PROP        || "외교유무"; // multi_select
-const EXTRA_TEXT_PROP   = process.env.EXTRA_TEXT_PROP   || "추가내용"; // rich_text/text
-const ORDER_PROP        = process.env.ORDER_PROP        || "순서"; // 숫자(Number) 속성 이름
+const COMPANY_PROP      = process.env.COMPANY_PROP      || "업체";     // select (신규: 나라 단일 DB에서 업체 구분)
+const POE_PROP          = process.env.POE_PROP          || "POE";      // select
+const DIPLO_PROP        = process.env.DIPLO_PROP        || "외교유무";  // multi_select
+const EXTRA_TEXT_PROP   = process.env.EXTRA_TEXT_PROP   || "추가내용";  // rich_text/text
+const ORDER_PROP        = process.env.ORDER_PROP        || "순서";      // number
 const MIN_CBM_PROP      = process.env.MIN_CBM_PROP      || "MIN CBM";
 const PER_CBM_PROP      = process.env.PER_CBM_PROP      || "PER CBM";
 const MIN_COST_PROP     = process.env.MIN_COST_PROP     || "MIN COST";
-const POE_PROP         = process.env.POE_PROP           || "POE";
 
-// ───────────────────────────────────────────────────────────
-// Utils: 안전한 JSON 로더(지연 로드)
-// ───────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────
+   Utils: 파일 로드/헤더/캐시
+────────────────────────────────────────────────────────── */
 function safeLoadJson(relPathFromRoot) {
   try {
     const full = path.join(process.cwd(), relPathFromRoot);
-    const raw = fs.readFileSync(full, "utf8");
-    return JSON.parse(raw);
+    return JSON.parse(fs.readFileSync(full, "utf8"));
   } catch (e) {
     return { __error: e.message, __path: relPathFromRoot };
   }
-}
-
-// HTML 이스케이프
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (m) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[m]));
-}
-
-// 🧩 노션의 rich_text → HTML 변환
-function notionRichToHtml(richTexts = []) {
-  return richTexts.map(rt => {
-    let t = escapeHtml(rt.text?.content || "").replace(/\n/g, "<br>"); // ← 줄바꿈 보존
-    const ann = rt.annotations || {};
-
-    // 스타일 변환
-    if (ann.bold) t = `<b>${t}</b>`;
-    if (ann.italic) t = `<i>${t}</i>`;
-    if (ann.underline) t = `<u>${t}</u>`;
-    if (ann.strikethrough) t = `<s>${t}</s>`;
-    if (ann.code) t = `<code>${t}</code>`;
-
-    // 색상 적용
-    if (ann.color && ann.color !== "default") {
-      const colorMap = {
-        red: "#dc2626", orange: "#ea580c", yellow: "#ca8a04",
-        green: "#16a34a", blue: "#2563eb", purple: "#7c3aed",
-        pink: "#db2777", gray: "#6b7280"
-      };
-      const htmlColor = colorMap[ann.color] || ann.color;
-      t = `<span style="color:${htmlColor}">${t}</span>`;
-    }
-
-    // 링크 처리
-    if (rt.text?.link?.url) {
-      const url = rt.text.link.url;
-      t = `<a href="${url}" target="_blank" rel="noopener noreferrer">${t}</a>`;
-    }
-
-    return t;
-  }).join("");
 }
 
 function getAllowed() {
@@ -95,13 +50,35 @@ function getAllowed() {
   return j;
 }
 
-function getDbMap() {
+function getDbMapRaw() {
   if (process.env.DB_MAP_JSON) {
     try { return JSON.parse(process.env.DB_MAP_JSON); } catch {}
   }
   const j = safeLoadJson("config/db-map.json");
   if (j.__error) throw new Error(`db-map.json load failed (${j.__path}): ${j.__error}`);
   return j;
+}
+
+/**
+ * ✅ 나라별 단일 DB id를 반환.
+ * - 권장 포맷: { "대한민국": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "미국": "yyyy..." }
+ * - 하위 호환:
+ *   - { "대한민국": { "__db": "xxx", "A업체": "...", ... } } 형태면 "__db" 또는 "_db" 또는 "dbId" 키를 사용
+ *   - { "대한민국": { "A업체": "..." } }만 있는 경우 → 단일 DB가 없으므로 null (이 경우 포맷 업데이트 권장)
+ */
+function getCountryDbId(country) {
+  const dbmap = getDbMapRaw();
+  const v = dbmap?.[country];
+  if (!v) return null;
+  if (typeof v === "string") return v; // 권장 포맷
+
+  if (typeof v === "object") {
+    // 하위 호환 키 지원
+    if (typeof v.__db === "string") return v.__db;
+    if (typeof v._db  === "string") return v._db;
+    if (typeof v.dbId === "string") return v.dbId;
+  }
+  return null;
 }
 
 function notionHeaders() {
@@ -117,110 +94,95 @@ function setCache(res) {
   res.setHeader("Cache-Control", `s-maxage=${CACHE_TTL_SECONDS}, stale-while-revalidate=86400`);
 }
 
-// 값 파싱 유틸
-function pickNumber(v) {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "number") return v;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : v;
+// HTML 이스케이프
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
 }
 
+// rich_text → HTML 간단 변환
+function notionRichToHtml(richTexts = []) {
+  return richTexts.map(rt => {
+    let t = escapeHtml(rt.text?.content || "").replace(/\n/g, "<br>");
+    const ann = rt.annotations || {};
+    if (ann.bold) t = `<b>${t}</b>`;
+    if (ann.italic) t = `<i>${t}</i>`;
+    if (ann.underline) t = `<u>${t}</u>`;
+    if (ann.strikethrough) t = `<s>${t}</s>`;
+    if (ann.code) t = `<code>${t}</code>`;
+    if (ann.color && ann.color !== "default") t = `<span style="color:${ann.color}">${t}</span>`;
+    if (rt.text?.link?.url) t = `<a href="${rt.text.link.url}" target="_blank" rel="noopener noreferrer">${t}</a>`;
+    return t;
+  }).join("");
+}
+
+// 값 파서
+const pickNumber = (v)=> (v==null?null:(typeof v==="number"?v:(Number.isFinite(+v)?+v:v)));
 function extractTitle(properties) {
-  // TITLE_PROP(title)에서 텍스트 합치기
   const p = properties?.[TITLE_PROP];
   if (!p || p.type !== "title") return null;
   const text = (p.title || []).map(t => t.plain_text || "").join("").trim();
   return text || null;
 }
-
 function valueFromColumn(properties, columnName) {
   const col = properties[columnName];
   if (!col) return null;
   switch (col.type) {
-    case "number":
-      return pickNumber(col.number);
-    case "rich_text":
-      return (col.rich_text || []).map(t => t.plain_text || "").join("").trim() || null;
-    case "formula":
-      return pickNumber(col.formula?.[col.formula?.type] ?? null);
-    default:
-      return null;
+    case "number":   return pickNumber(col.number);
+    case "rich_text":return (col.rich_text||[]).map(t=>t.plain_text||"").join("").trim() || null;
+    case "formula":  return pickNumber(col.formula?.[col.formula?.type] ?? null);
+    default:         return null;
   }
 }
-
-// select / multi_select / extra text 파서
-const getSelectName = (props, key) => {
-  const p = props?.[key];
-  return (p && p.type === "select" && p.select?.name) ? p.select.name : null;
-};
-
+const getSelectName = (props, key) => (props?.[key]?.type==="select" ? (props[key].select?.name || null) : null);
 const getMultiSelectNames = (props, key) => {
   const p = props?.[key];
-  if (!p || p.type !== "multi_select") return [];
-  return (p.multi_select || []).map(o => o.name).filter(Boolean);
+  if (!p || p.type!=="multi_select") return [];
+  return (p.multi_select||[]).map(o=>o.name).filter(Boolean);
 };
-
-const getExtraText = (props, key) => {
-  const p = props?.[key];
-  if (!p) return null;
-  if (p.type === "rich_text") {
-    const s = (p.rich_text || []).map(t => t.plain_text || "").join("").trim();
-    return s || null;
-  }
-  if (p.type === "formula") return p.formula?.string ?? null;
-  return null;
-};
-
 function getNumberProp(props, key) {
   const col = props?.[key];
   if (!col) return null;
-  if (col.type === "number") return pickNumber(col.number);
-  if (col.type === "formula") return pickNumber(col.formula?.[col.formula?.type] ?? null);
-  if (col.type === "rich_text") {
-    const s = (col.rich_text || []).map(t => t.plain_text || "").join("").trim();
-    const n = Number(s);
-    return Number.isFinite(n) ? n : null;
+  if (col.type==="number")  return pickNumber(col.number);
+  if (col.type==="formula") return pickNumber(col.formula?.[col.formula?.type] ?? null);
+  if (col.type==="rich_text") {
+    const s = (col.rich_text||[]).map(t=>t.plain_text||"").join("").trim();
+    const n = Number(s); return Number.isFinite(n) ? n : null;
   }
   return null;
 }
-
-// MIN CBM / PER CBM / MIN COST 삼형제가 있는지
 function hasCbmTriplet(props) {
   const minCbm  = getNumberProp(props, MIN_CBM_PROP);
   const perCbm  = getNumberProp(props, PER_CBM_PROP);
   const minCost = getNumberProp(props, MIN_COST_PROP);
   return (minCbm != null && perCbm != null && minCost != null);
 }
-
-// 실제 요금 계산: MIN COST + max(0, CBM - MIN CBM) * PER CBM
 function computeConsoleCost(props, cbmInput) {
   const minCbm  = getNumberProp(props, MIN_CBM_PROP);
   const perCbm  = getNumberProp(props, PER_CBM_PROP);
   const minCost = getNumberProp(props, MIN_COST_PROP);
   if (minCbm == null || perCbm == null || minCost == null) return null;
-
-  const effCbm = Number.isFinite(cbmInput) ? cbmInput : minCbm; // CBM 미지정 시 최소값으로
+  const effCbm = Number.isFinite(cbmInput) ? cbmInput : minCbm;
   const diff   = Math.max(0, effCbm - minCbm);
   return pickNumber(minCost + diff * perCbm);
 }
 
-  // 📦 DB 메타에서 숫자 컬럼의 포맷(dollar, won, euro...)만 추출
-  function extractNumberFormats(meta) {
-    const props = meta?.data?.properties || {};
-    const formats = {};
-    for (const [key, def] of Object.entries(props)) {
-      if (def?.type === "number" && def.number?.format) {
-        formats[key] = def.number.format; // e.g., "dollar", "won", "euro"
-      }
-      // 참고: formula → number 결과는 컬럼 포맷이 없음(표시 형식은 프론트에서 결정)
+// DB 메타에서 숫자 컬럼 포맷(dollar, won…) 추출
+function extractNumberFormats(meta) {
+  const props = meta?.data?.properties || {};
+  const formats = {};
+  for (const [key, def] of Object.entries(props)) {
+    if (def?.type === "number" && def.number?.format) {
+      formats[key] = def.number.format;
     }
-    return formats;
   }
+  return formats;
+}
 
-
-// ───────────────────────────────────────────────────────────
-// Routes
-// ───────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────
+   Routes
+────────────────────────────────────────────────────────── */
 
 // Health
 app.get(["/", "/api/health"], (req, res) => {
@@ -229,130 +191,95 @@ app.get(["/", "/api/health"], (req, res) => {
 });
 
 // 디버그: 설정/환경 확인
-app.get("/api/debug/config", (req, res) => {
+app.get("/api/debug/config", async (req, res) => {
   try {
     const allowed = getAllowed();
-    const dbmap = getDbMap();
+    const raw = getDbMapRaw();
+    const countries = Object.keys(raw);
 
-    // 최상위 국가 키
-    const countries = Object.keys(dbmap);
-
-    // 첫 번째 국가의 업체 목록 미리 보기 (없을 수도 있음)
-    const firstCountry = countries[0];
-    const companies = firstCountry ? Object.keys(dbmap[firstCountry]) : [];
-
-    // 샘플 ID (첫 국가의 첫 업체)
-    const sampleId =
-      firstCountry && companies.length > 0
-        ? dbmap[firstCountry][companies[0]]
-        : null;
+    // 첫 번째 국가
+    const firstCountry = countries[0] || null;
+    let companiesPreview = [];
+    let numberFormats = {};
+    if (firstCountry) {
+      const dbid = getCountryDbId(firstCountry);
+      if (dbid) {
+        const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
+        const prop = meta.data.properties?.[COMPANY_PROP];
+        companiesPreview = (prop?.type === "select" ? (prop.select?.options||[]).map(o=>o.name) : []);
+        numberFormats = extractNumberFormats(meta);
+      }
+    }
 
     res.json({
       ok: true,
       env: { NOTION_TOKEN_PRESENT: Boolean(NOTION_TOKEN) },
       allowedTypes: allowed,
-      dbStructure: dbmap,              // 전체 구조 미리 보기
-      countries,                       // ["미국", "중국", ...]
-      companiesByFirstCountry: companies, // 예: ["A업체", "B업체"]
-      sample: {
-        country: firstCountry || null,
-        company: companies[0] || null,
-        dbId: sampleId
-      },
-      props: { TITLE_PROP, REGION_PROP, DIPLO_PROP, EXTRA_TEXT_PROP }
+      dbStructure: raw, // 국가 → (권장) 단일 DB id (하위호환: 객체)
+      countries,
+      companiesPreview,
+      props: { TITLE_PROP, REGION_PROP, COMPANY_PROP, POE_PROP, DIPLO_PROP, EXTRA_TEXT_PROP, ORDER_PROP },
+      numberFormatsPreview: numberFormats
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-
-// 컬럼(속성) 목록
-// GET /api/notion/list-columns?country=TEST국가
+// 컬럼(속성) 목록 — 이제 country만 필요(단일 DB)
 app.get("/api/notion/list-columns", async (req, res) => {
   try {
-    const country = req.query.country;
-    if (!country) return res.status(400).json({ ok: false, error: "country query is required" });
+    const country = (req.query.country||"").trim();
+    if (!country) return res.status(400).json({ ok:false, error:"country is required" });
 
-    const dbmap = getDbMap();
-    const company = (req.query.company || "").trim(); // 회사명 A업체, B업체 ...
-    const dbid = dbmap[country]?.[company];
-    
-    if (!dbid) {
-      return res.status(404).json({
-        ok: false,
-        error: `Unknown country/company combination: ${country}/${company}`
-      });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
 
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
-      headers: notionHeaders()
-    });
-
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
     const columns = Object.keys(meta.data.properties || {});
     const numberFormats = extractNumberFormats(meta);
     setCache(res);
-    res.json({ ok: true, country, columns, numberFormats });
+    res.json({ ok:true, country, columns, numberFormats });
   } catch (e) {
     const details = e.response?.data || e.message || e.toString();
-    res.status(500).json({ ok: false, error: "list-columns failed", details });
+    res.status(500).json({ ok:false, error:"list-columns failed", details });
   }
 });
 
-// 비용 조회 (지역 + 외교유무 + 추가내용 항상 포함)
-// GET /api/costs/:country?type=20FT&region=A지역&roles=DIPLOMAT,NON-DIPLOMAT
-// 호환: pick / select 쿼리는 region 에일리어스
+// 비용 조회 (단일 DB). company는 선택적 필터로 반영
+// GET /api/costs/:country?type=20FT&region=A지역&company=AMS&roles=DIPLOMAT,NON-DIPLOMAT&cbm=12
 app.get("/api/costs/:country", async (req, res) => {
   try {
     const country = req.params.country;
     const allowed = getAllowed();
 
     const typeParam = (req.query.type || "").trim();
-    const region = (req.query.region || req.query.pick || req.query.select || "").trim();
-    const rolesStr = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
-    const roles = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
+    const region    = (req.query.region || req.query.pick || req.query.select || "").trim();
+    const company   = (req.query.company || "").trim();
+    const rolesStr  = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
+    const roles     = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
+    const cbmQ      = Number(req.query.cbm);
+    const cbm       = Number.isFinite(cbmQ) ? cbmQ : null;
 
-    // ✅ CBM 쿼리값 (정수)
-    const cbmQ = Number(req.query.cbm);
-    const cbm = Number.isFinite(cbmQ) ? cbmQ : null;
-
-    // type 검증: CONSOLE 은 허용(계산용), 그 외는 allowed에 있어야 함
     const type = typeParam || allowed[0];
     if (type !== "CONSOLE" && !allowed.includes(type)) {
-      return res.status(400).json({
-        ok: false,
-        error: `Invalid type. Use one of: CONSOLE, ${allowed.join(", ")}`
-      });
+      return res.status(400).json({ ok:false, error:`Invalid type. Use one of: CONSOLE, ${allowed.join(", ")}` });
     }
 
-    // --- DB 조회
-    const dbmap = getDbMap();
-    const company = (req.query.company || "").trim();
-    const dbid = dbmap[country]?.[company];
-    if (!dbid) {
-      return res.status(404).json({
-        ok: false,
-        error: `Unknown country/company combination: ${country}/${company}`
-      });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
 
-    
-  // ✅ (신규) DB 메타 읽어서 숫자 컬럼 포맷 추출
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
-    headers: notionHeaders()
-    });
+    // 메타(숫자 포맷)
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
     const numberFormats = extractNumberFormats(meta);
 
-  
-    // --- Notion 필터 구성
+    // 필터 구성
     const andFilters = [];
     if (region) {
-      andFilters.push({
-        or: [
-          { property: REGION_PROP, select: { equals: region } },
-          { property: REGION_PROP, select: { is_empty: true } }
-        ]
-      });
+      andFilters.push({ property: REGION_PROP,  select: { equals: region } });
+    }
+    if (company) {
+      andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
     }
     if (roles.length === 1) {
       andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
@@ -365,14 +292,10 @@ app.get("/api/costs/:country", async (req, res) => {
     else if (andFilters.length > 1) body.filter = { and: andFilters };
     body.sorts = [{ property: ORDER_PROP, direction: "ascending" }];
 
-    const q = await axios.post(
-      `https://api.notion.com/v1/databases/${dbid}/query`,
-      body,
-      { headers: notionHeaders() }
-    );
+    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
     const results = q.data.results || [];
 
-    // --- 응답 구조
+    // 응답 구조
     const rows = [];
     const values = {};
     const extras = {};
@@ -381,32 +304,25 @@ app.get("/api/costs/:country", async (req, res) => {
 
     for (const page of results) {
       const props = page.properties || {};
-      const itemName = extractTitle(props);
+      const itemName  = extractTitle(props);
       if (!itemName) continue;
 
       const regionName = getSelectName(props, REGION_PROP);
-      const extraVal = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
+      const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
 
-      // 1️⃣ 기본값: 선택된 type(20FT/40HC)
-      let numVal = (type === "CONSOLE")
-        ? null
-        : pickNumber(valueFromColumn(props, type));
-
-      // 2️⃣ CONSOLE 모드이거나, 20FT·40HC 값이 없고 삼형제가 존재하면 CBM 계산
+      let numVal = (type === "CONSOLE") ? null : pickNumber(valueFromColumn(props, type));
       if (type === "CONSOLE" || ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))) {
         numVal = computeConsoleCost(props, cbm);
       }
 
-      // --- rows 구성
       const rowObj = { item: itemName, region: regionName, extra: extraVal };
       for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
       rowObj["MIN CBM"]  = getNumberProp(props, MIN_CBM_PROP);
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
       rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
-      rowObj[type] = numVal;
+      rowObj[type]       = numVal;
       rows.push(rowObj);
 
-      // --- region 그룹 반영
       if (region) {
         if (!regionName || regionName === region) {
           values[itemName] = numVal;
@@ -426,8 +342,7 @@ app.get("/api/costs/:country", async (req, res) => {
       ok: true,
       country,
       type,
-      filters: { region: region || null, roles: roles.length ? roles : null, cbm },
-      // ✅ (신규) 컬럼별 숫자 포맷 제공: { "20FT": "dollar", "40HC": "dollar", "MIN COST": "won", ... }
+      filters: { region: region || null, company: company || null, roles: roles.length ? roles : null, cbm },
       numberFormats,
       ...(region ? { values, extras } : { valuesByRegion, extrasByRegion }),
       rows,
@@ -436,222 +351,120 @@ app.get("/api/costs/:country", async (req, res) => {
 
   } catch (e) {
     const details = e.response?.data || e.message || e.toString();
-    res.status(500).json({ ok: false, error: "costs failed", details });
+    res.status(500).json({ ok:false, error:"costs failed", details });
   }
 });
 
-// 지역 목록 모으기: 국가 → 모든 업체 DB의 '지역' select 옵션을 합집합으로
+// 지역 목록: 나라 단일 DB 메타의 REGION select 옵션
 app.get("/api/regions/:country", async (req, res) => {
   try {
     const country = req.params.country;
-    const dbmap = getDbMap();
-    const companies = Object.keys(dbmap[country] || {});
-    if (!companies.length) {
-      return res.json({ ok: true, country, regions: [] });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.json({ ok:true, country, regions: [] });
 
-    // 각 DB 메타에서 지역 select 옵션 읽기 (빠름)
-    const tasks = companies.map(async (company) => {
-      const dbid = dbmap[country][company];
-      try {
-        const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
-          headers: notionHeaders()
-        });
-        const prop = meta.data.properties?.[REGION_PROP];
-        const opts = (prop?.type === "select" ? (prop.select?.options || []) : []);
-        return opts.map(o => o.name).filter(Boolean);
-      } catch {
-        return [];
-      }
-    });
-
-    const arrays = await Promise.all(tasks);
-    const regions = [...new Set(arrays.flat())]; // 중복 제거
-
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
+    const prop = meta.data.properties?.[REGION_PROP];
+    const regions = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name).filter(Boolean) : []);
     setCache(res);
-    res.json({ ok: true, country, regions });
+    res.json({ ok:true, country, regions });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "regions failed", details: e.message || String(e) });
+    res.status(500).json({ ok:false, error:"regions failed", details:e.message || String(e) });
   }
 });
 
-// 지역 → 업체 필터링: 해당 지역을 '지원하는' 업체 리스트
-// mode=options (기본): DB 옵션에 지역이 있으면 포함
-// mode=data: 실제로 지역=값 인 페이지가 1행 이상 존재하면 포함
+// 지역 → 업체 (중복 제거, 실제 데이터 기준)
 app.get("/api/companies/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
-    const mode    = (req.query.mode    || "options").trim(); // options | data
+    if (!country || !region) return res.status(400).json({ ok:false, error:"country and region are required" });
 
-    if (!country || !region) {
-      return res.status(400).json({ ok: false, error: "country and region are required" });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.json({ ok:true, country, region, companies: [] });
 
-    const dbmap = getDbMap();
-    const companies = Object.keys(dbmap[country] || {});
-    if (!companies.length) {
-      return res.json({ ok: true, country, region, mode, companies: [] });
-    }
+    const body = {
+      page_size: 100,
+      filter: { property: REGION_PROP, select: { equals: region } },
+      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
+    };
+    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
+    const results = q.data.results || [];
 
-    if (mode === "options") {
-      // 빠른 경로: DB 메타의 지역(select) 옵션에 region이 존재하면 해당 업체 포함
-      const tasks = companies.map(async (company) => {
-        const dbid = dbmap[country][company];
-        try {
-          const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
-            headers: notionHeaders()
-          });
-          const prop = meta.data.properties?.[REGION_PROP];
-          const has = (prop?.type === "select")
-            ? (prop.select?.options || []).some(o => o.name === region)
-            : false;
-          return has ? company : null;
-        } catch {
-          return null;
-        }
-      });
-      const result = (await Promise.all(tasks)).filter(Boolean);
-      setCache(res);
-      return res.json({ ok: true, country, region, mode, companies: result });
-    }
+    const companies = [...new Set(
+      results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
+    )];
 
-    // mode === "data": 실제 region=값인 페이지가 1행 이상 존재하는 업체만 포함
-    const tasks = companies.map(async (company) => {
-      const dbid = dbmap[country][company];
-      try {
-        const body = {
-          page_size: 1,
-          filter: { property: REGION_PROP, select: { equals: region } }
-        };
-        const q = await axios.post(
-          `https://api.notion.com/v1/databases/${dbid}/query`,
-          body,
-          { headers: notionHeaders() }
-        );
-        const count = (q.data.results || []).length;
-        return count > 0 ? company : null;
-      } catch {
-        return null;
-      }
-    });
-    const result = (await Promise.all(tasks)).filter(Boolean);
     setCache(res);
-    res.json({ ok: true, country, region, mode, companies: result });
+    res.json({ ok:true, country, region, companies });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "companies-by-region failed", details: e.message || String(e) });
+    res.status(500).json({ ok:false, error:"companies-by-region failed", details:e.message || String(e) });
   }
 });
 
-
-// 지역 → 업체 필터링: 해당 지역을 '지원하는' 업체 리스트
-// mode=options (기본): DB 옵션에 지역이 있으면 포함
-// mode=data: 실제로 지역=값 인 페이지가 1행 이상 존재하면 포함
+// 지역 → POE (중복 제거, 실제 데이터 기준)
 app.get("/api/poe/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
-    const mode    = (req.query.mode    || "data").trim(); // 기본 data
+    if (!country || !region) return res.status(400).json({ ok:false, error:"country and region are required" });
 
-    if (!country || !region) {
-      return res.status(400).json({ ok: false, error: "country and region are required" });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.json({ ok:true, country, region, poes: [] });
 
-    const dbmap = getDbMap();
-    const companies = Object.keys(dbmap[country] || {});
-    if (!companies.length) {
-      return res.json({ ok: true, country, region, mode, poes: [] });
-    }
+    const body = {
+      page_size: 100,
+      filter: { property: REGION_PROP, select: { equals: region } },
+      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
+    };
+    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
+    const results = q.data.results || [];
 
-    // 결과 모을 Set (중복 제거)
-    const poeSet = new Set();
+    const poes = [...new Set(
+      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+    )];
 
-    if (mode === "options") {
-      // 각 DB 메타에서 POE select 옵션 전체 모으기 (빠름)
-      const tasks = companies.map(async (company) => {
-        const dbid = dbmap[country][company];
-        try {
-          const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
-            headers: notionHeaders()
-          });
-          const prop = meta.data.properties?.[POE_PROP];
-          const names = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name) : []);
-          names.forEach(name => name && poeSet.add(name));
-        } catch {}
-      });
-      await Promise.all(tasks);
-    } else {
-      // data 모드: 실제 region=값인 페이지들에서 POE(select.name)만 모으기
-      const tasks = companies.map(async (company) => {
-        const dbid = dbmap[country][company];
-        try {
-          const body = {
-            page_size: 100,
-            filter: { property: REGION_PROP, select: { equals: region } },
-            sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-          };
-          const q = await axios.post(
-            `https://api.notion.com/v1/databases/${dbid}/query`,
-            body,
-            { headers: notionHeaders() }
-          );
-          const results = q.data.results || [];
-          for (const page of results) {
-            const props = page.properties || {};
-            const poe = (props?.[POE_PROP]?.type === "select") ? props[POE_PROP].select?.name : null;
-            if (poe) poeSet.add(poe);
-          }
-        } catch {}
-      });
-      await Promise.all(tasks);
-    }
-
-    const list = [...poeSet];
     setCache(res);
-    res.json({ ok: true, country, region, mode, count: list.length, poes: list });
+    res.json({ ok:true, country, region, poes });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "poe-by-region failed", details: e.message || String(e) });
+    res.status(500).json({ ok:false, error:"poe-by-region failed", details:e.message || String(e) });
   }
 });
 
+// 업체+지역 → POE (중복 제거, 실제 데이터 기준)
 app.get("/api/poe/by-company", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
     const company = (req.query.company || "").trim();
-    if (!country || !region || !company) {
-      return res.status(400).json({ ok:false, error:"country, region, company are required" });
-    }
+    if (!country || !region || !company) return res.status(400).json({ ok:false, error:"country, region, company are required" });
 
-    const dbmap = getDbMap();
-    const dbid  = dbmap?.[country]?.[company];
-    if (!dbid) {
-      return res.json({ ok:true, country, region, company, poes: [] });
-    }
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.json({ ok:true, country, region, company, poes: [] });
 
-    const poeSet = new Set();
-    // 실제 데이터에서 region=값인 행들의 POE만 수집
     const body = {
       page_size: 100,
-      filter: { property: REGION_PROP, select: { equals: region } },
+      filter: { and: [
+        { property: REGION_PROP,  select: { equals: region } },
+        { property: COMPANY_PROP, select: { equals: company } }
+      ]},
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
     };
     const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
     const results = q.data.results || [];
-    for (const page of results) {
-      const props = page.properties || {};
-      const poe = (props?.[POE_PROP]?.type === "select") ? props[POE_PROP].select?.name : null;
-      if (poe) poeSet.add(poe);
-    }
-    const list = [...poeSet];
+
+    const poes = [...new Set(
+      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+    )];
+
     setCache(res);
-    res.json({ ok:true, country, region, company, count:list.length, poes:list });
+    res.json({ ok:true, country, region, company, poes });
   } catch (e) {
-    res.status(500).json({ ok:false, error:"poe-by-company failed", details: e.message || String(e) });
+    res.status(500).json({ ok:false, error:"poe-by-company failed", details:e.message || String(e) });
   }
 });
 
-// ───────────────────────────────────────────────────────────
-// Export (Vercel @vercel/node용)
-// ───────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────
+   Export (Vercel @vercel/node)
+────────────────────────────────────────────────────────── */
 module.exports = app;
+
