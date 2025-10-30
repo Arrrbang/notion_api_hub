@@ -545,6 +545,42 @@ app.get("/api/poe/by-region", async (req, res) => {
   }
 });
 
+app.get("/api/poe/by-company", async (req, res) => {
+  try {
+    const country = (req.query.country || "").trim();
+    const region  = (req.query.region  || "").trim();
+    const company = (req.query.company || "").trim();
+    if (!country || !region || !company) {
+      return res.status(400).json({ ok:false, error:"country, region, company are required" });
+    }
+
+    const dbmap = getDbMap();
+    const dbid  = dbmap?.[country]?.[company];
+    if (!dbid) {
+      return res.json({ ok:true, country, region, company, poes: [] });
+    }
+
+    const poeSet = new Set();
+    // 실제 데이터에서 region=값인 행들의 POE만 수집
+    const body = {
+      page_size: 100,
+      filter: { property: REGION_PROP, select: { equals: region } },
+      sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+    };
+    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
+    const results = q.data.results || [];
+    for (const page of results) {
+      const props = page.properties || {};
+      const poe = (props?.[POE_PROP]?.type === "select") ? props[POE_PROP].select?.name : null;
+      if (poe) poeSet.add(poe);
+    }
+    const list = [...poeSet];
+    setCache(res);
+    res.json({ ok:true, country, region, company, count:list.length, poes:list });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:"poe-by-company failed", details: e.message || String(e) });
+  }
+});
 
 // ───────────────────────────────────────────────────────────
 // Export (Vercel @vercel/node용)
