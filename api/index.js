@@ -478,6 +478,75 @@ app.get("/api/regions/:country", async (req, res) => {
 // 지역 → 업체 필터링: 해당 지역을 '지원하는' 업체 리스트
 // mode=options (기본): DB 옵션에 지역이 있으면 포함
 // mode=data: 실제로 지역=값 인 페이지가 1행 이상 존재하면 포함
+app.get("/api/companies/by-region", async (req, res) => {
+  try {
+    const country = (req.query.country || "").trim();
+    const region  = (req.query.region  || "").trim();
+    const mode    = (req.query.mode    || "options").trim(); // options | data
+
+    if (!country || !region) {
+      return res.status(400).json({ ok: false, error: "country and region are required" });
+    }
+
+    const dbmap = getDbMap();
+    const companies = Object.keys(dbmap[country] || {});
+    if (!companies.length) {
+      return res.json({ ok: true, country, region, mode, companies: [] });
+    }
+
+    if (mode === "options") {
+      // 빠른 경로: DB 메타의 지역(select) 옵션에 region이 존재하면 해당 업체 포함
+      const tasks = companies.map(async (company) => {
+        const dbid = dbmap[country][company];
+        try {
+          const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, {
+            headers: notionHeaders()
+          });
+          const prop = meta.data.properties?.[REGION_PROP];
+          const has = (prop?.type === "select")
+            ? (prop.select?.options || []).some(o => o.name === region)
+            : false;
+          return has ? company : null;
+        } catch {
+          return null;
+        }
+      });
+      const result = (await Promise.all(tasks)).filter(Boolean);
+      setCache(res);
+      return res.json({ ok: true, country, region, mode, companies: result });
+    }
+
+    // mode === "data": 실제 region=값인 페이지가 1행 이상 존재하는 업체만 포함
+    const tasks = companies.map(async (company) => {
+      const dbid = dbmap[country][company];
+      try {
+        const body = {
+          page_size: 1,
+          filter: { property: REGION_PROP, select: { equals: region } }
+        };
+        const q = await axios.post(
+          `https://api.notion.com/v1/databases/${dbid}/query`,
+          body,
+          { headers: notionHeaders() }
+        );
+        const count = (q.data.results || []).length;
+        return count > 0 ? company : null;
+      } catch {
+        return null;
+      }
+    });
+    const result = (await Promise.all(tasks)).filter(Boolean);
+    setCache(res);
+    res.json({ ok: true, country, region, mode, companies: result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "companies-by-region failed", details: e.message || String(e) });
+  }
+});
+
+
+// 지역 → 업체 필터링: 해당 지역을 '지원하는' 업체 리스트
+// mode=options (기본): DB 옵션에 지역이 있으면 포함
+// mode=data: 실제로 지역=값 인 페이지가 1행 이상 존재하면 포함
 app.get("/api/poe/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
