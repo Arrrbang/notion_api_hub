@@ -15,7 +15,8 @@ app.use(express.json());
    ENV / 상수
 ────────────────────────────────────────────────────────── */
 const NOTION_TOKEN      = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
-const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 600);
+const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 0);
+/*노션 속성 읽기 주기 변경. 0으로 현재 실시간. 업데이트 완료 후 600으로 변경요망*/
 
 // 노션 속성명(필요시 Vercel 환경변수로 변경 가능)
 const TITLE_PROP        = process.env.TITLE_PROP        || "이름";     // title
