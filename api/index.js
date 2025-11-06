@@ -465,24 +465,40 @@ app.get("/api/poe/by-company", async (req, res) => {
 });
 
 // 화물타입 목록: 나라 단일 DB 메타의 DIPLO_PROP(= "화물타입") multi_select 옵션
-app.get("/api/cargo-types/:country", async (req, res) => {
+// 업체(필수) [+ 국가/지역] → 화물타입 distinct (multi_select "화물타입")
+app.get("/api/cargo-types/by-partner", async (req, res) => {
   try {
-    const country = req.params.country;
+    const country = (req.query.country || "").trim();
+    const region  = (req.query.region  || "").trim(); // 선택
+    const company = (req.query.company || "").trim();
+    if (!country || !company) return res.status(400).json({ ok:false, error:"country and company are required" });
+
     const dbid = getCountryDbId(country);
     if (!dbid) return res.json({ ok:true, country, types: [] });
 
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
-    const prop = meta.data.properties?.[DIPLO_PROP]; // "화물타입"
-    const types = (prop?.type === "multi_select"
-      ? (prop.multi_select?.options || []).map(o => o.name).filter(Boolean)
-      : []);
+    const andFilters = [{ property: COMPANY_PROP, select: { equals: company } }];
+    if (region) andFilters.push({ property: REGION_PROP, select: { equals: region } });
+
+    const body = {
+      page_size: 100,
+      filter: (andFilters.length === 1 ? andFilters[0] : { and: andFilters }),
+      sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+    };
+
+    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
+    const results = q.data.results || [];
+
+    const types = [...new Set(
+      results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
+    )];
 
     setCache(res);
-    res.json({ ok:true, country, types });
+    res.json({ ok:true, country, region: region || null, company, types });
   } catch (e) {
-    res.status(500).json({ ok:false, error:"cargo-types failed", details:e.message || String(e) });
+    res.status(500).json({ ok:false, error:"cargo-types-by-partner failed", details:e.message || String(e) });
   }
 });
+
 
 
 /* ─────────────────────────────────────────────────────────
