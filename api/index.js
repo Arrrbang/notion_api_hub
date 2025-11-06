@@ -463,6 +463,27 @@ app.get("/api/poe/by-company", async (req, res) => {
   }
 });
 
+// 화물타입 목록: 나라 단일 DB 메타의 DIPLO_PROP(= "화물타입") multi_select 옵션
+app.get("/api/cargo-types/:country", async (req, res) => {
+  try {
+    const country = req.params.country;
+    const dbid = getCountryDbId(country);
+    if (!dbid) return res.json({ ok:true, country, types: [] });
+
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
+    const prop = meta.data.properties?.[DIPLO_PROP]; // "화물타입"
+    const types = (prop?.type === "multi_select"
+      ? (prop.multi_select?.options || []).map(o => o.name).filter(Boolean)
+      : []);
+
+    setCache(res);
+    res.json({ ok:true, country, types });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:"cargo-types failed", details:e.message || String(e) });
+  }
+});
+
+
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
 ────────────────────────────────────────────────────────── */
