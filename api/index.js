@@ -67,19 +67,64 @@ function getDbMapRaw() {
  *   - { "대한민국": { "__db": "xxx", "A업체": "...", ... } } 형태면 "__db" 또는 "_db" 또는 "dbId" 키를 사용
  *   - { "대한민국": { "A업체": "..." } }만 있는 경우 → 단일 DB가 없으므로 null (이 경우 포맷 업데이트 권장)
  */
-function getCountryDbId(country) {
+// ✅ 국가에 매핑된 DB id 배열을 반환 (문자열/배열/레거시 객체 모두 지원)
+function getCountryDbIds(country) {
   const dbmap = getDbMapRaw();
   const v = dbmap?.[country];
-  if (!v) return null;
-  if (typeof v === "string") return v; // 권장 포맷
+  if (!v) return [];
 
+  // 문자열 → 단일 배열
+  if (typeof v === "string") return [v].filter(Boolean);
+
+  // 배열 → 그대로
+  if (Array.isArray(v)) return v.filter(Boolean);
+
+  // 레거시 객체 → __db / _db / dbId / dbIds / __dbs 등
   if (typeof v === "object") {
-    // 하위 호환 키 지원
-    if (typeof v.__db === "string") return v.__db;
-    if (typeof v._db  === "string") return v._db;
-    if (typeof v.dbId === "string") return v.dbId;
+    const picks = [];
+    if (typeof v.__db === "string") picks.push(v.__db);
+    if (typeof v._db  === "string") picks.push(v._db);
+    if (typeof v.dbId === "string") picks.push(v.dbId);
+    if (Array.isArray(v.dbIds)) picks.push(...v.dbIds);
+    if (Array.isArray(v.__dbs)) picks.push(...v.__dbs);
+    return picks.filter(Boolean);
   }
-  return null;
+  return [];
+}
+
+// ⛳ 기존 단일 버전은 하위호환을 위해 남겨둠
+function getCountryDbId(country) {
+  const arr = getCountryDbIds(country);
+  return arr[0] || null;
+}
+
+// ✅ 메타의 숫자 포맷 병합 (우측 우선)
+function mergeNumberFormats(base = {}, add = {}) {
+  return { ...base, ...add };
+}
+
+// ✅ 배열 유니크(문자열)
+const uniq = (arr) => [...new Set(arr.filter(Boolean))];
+
+// ✅ 여러 DB 메타를 병렬로 읽어 numberFormats 병합
+async function fetchMergedNumberFormats(dbids) {
+  let formats = {};
+  for (const dbid of dbids) {
+    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
+    formats = mergeNumberFormats(formats, extractNumberFormats(meta));
+  }
+  return formats;
+}
+
+// ✅ 여러 DB를 같은 쿼리(body)로 병렬 조회 → results 합치기
+async function queryAllDatabases(dbids, body) {
+  const calls = dbids.map(dbid =>
+    axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() })
+      .then(r => r.data?.results || [])
+      .catch(() => [])
+  );
+  const chunks = await Promise.all(calls);
+  return chunks.flat();
 }
 
 function notionHeaders() {
@@ -228,27 +273,37 @@ app.get("/api/debug/config", async (req, res) => {
 });
 
 // 컬럼(속성) 목록 — 이제 country만 필요(단일 DB)
+// 🔄 교체: 단일 → 다중
 app.get("/api/notion/list-columns", async (req, res) => {
   try {
     const country = (req.query.country||"").trim();
     if (!country) return res.status(400).json({ ok:false, error:"country is required" });
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
 
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
-    const columns = Object.keys(meta.data.properties || {});
-    const numberFormats = extractNumberFormats(meta);
+    // 첫 번째 DB에서 컬럼 스키마를 대표로 가져오고, 포맷은 모두 병합
+    const meta0 = await axios.get(`https://api.notion.com/v1/databases/${dbids[0]}`, { headers: notionHeaders() });
+    const columns = Object.keys(meta0.data.properties || {});
+    let numberFormats = extractNumberFormats(meta0);
+
+    for (let i=1;i<dbids.length;i++){
+      const metai = await axios.get(`https://api.notion.com/v1/databases/${dbids[i]}`, { headers: notionHeaders() });
+      numberFormats = mergeNumberFormats(numberFormats, extractNumberFormats(metai));
+    }
+
     setCache(res);
-    res.json({ ok:true, country, columns, numberFormats });
+    res.json({ ok:true, country, columns, numberFormats, dbCount: dbids.length });
   } catch (e) {
     const details = e.response?.data || e.message || e.toString();
     res.status(500).json({ ok:false, error:"list-columns failed", details });
   }
 });
 
+
 // 비용 조회 (단일 DB). company는 선택적 필터로 반영
 // GET /api/costs/:country?type=20FT&region=A지역&company=AMS&roles=DIPLOMAT,NON-DIPLOMAT&cbm=12
+// 🔄 교체: 단일 → 다중
 app.get("/api/costs/:country", async (req, res) => {
   try {
     const country = req.params.country;
@@ -267,37 +322,32 @@ app.get("/api/costs/:country", async (req, res) => {
       return res.status(400).json({ ok:false, error:`Invalid type. Use one of: CONSOLE, ${allowed.join(", ")}` });
     }
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.status(404).json({ ok:false, error:`Unknown country: ${country}` });
 
-    // 메타(숫자 포맷)
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
-    const numberFormats = extractNumberFormats(meta);
+    // 숫자 포맷 병합
+    const numberFormats = await fetchMergedNumberFormats(dbids);
 
     // 필터 구성
     const andFilters = [];
-    if (region) {
-      andFilters.push({ property: REGION_PROP,  select: { equals: region } });
-    }
-    if (company) {
-      andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
-    }
+    if (region)  andFilters.push({ property: REGION_PROP,  select: { equals: region } });
+    if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
     if (roles.length === 1) {
       andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
     } else if (roles.length > 1) {
       andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
     }
-
-    const body = { page_size: 100 };
+    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
     if (andFilters.length === 1) body.filter = andFilters[0];
     else if (andFilters.length > 1) body.filter = { and: andFilters };
-    body.sorts = [{ property: ORDER_PROP, direction: "ascending" }];
 
-    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
-    const results = q.data.results || [];
+    // 여러 DB에서 결과 수집
+    const results = await queryAllDatabases(dbids, body);
 
-    // 응답 구조
+    // 응답 구성(중복 항목 머지)
     const rows = [];
+    const seen = new Set(); // item+region 키 중복 방지
+
     const values = {};
     const extras = {};
     const valuesByRegion = {};
@@ -322,10 +372,17 @@ app.get("/api/costs/:country", async (req, res) => {
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
       rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
       rowObj[type]       = numVal;
-      rows.push(rowObj);
+
+      // 중복 방지 키
+      const dedupKey = `${itemName}__${regionName || "기타"}`;
+      if (!seen.has(dedupKey)) {
+        seen.add(dedupKey);
+        rows.push(rowObj);
+      }
 
       if (region) {
         if (!regionName || regionName === region) {
+          // 마지막 값이 덮어쓰는 우측 우선 정책
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
@@ -343,6 +400,7 @@ app.get("/api/costs/:country", async (req, res) => {
       ok: true,
       country,
       type,
+      dbCount: dbids.length,
       filters: { region: region || null, company: company || null, roles: roles.length ? roles : null, cbm },
       numberFormats,
       ...(region ? { values, extras } : { valuesByRegion, extrasByRegion }),
@@ -356,82 +414,94 @@ app.get("/api/costs/:country", async (req, res) => {
   }
 });
 
+
 // 지역 목록: 나라 단일 DB 메타의 REGION select 옵션
+// 🔄 교체: 여러 DB의 REGION 옵션 합치기
 app.get("/api/regions/:country", async (req, res) => {
   try {
     const country = req.params.country;
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.json({ ok:true, country, regions: [] });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.json({ ok:true, country, regions: [] });
 
-    const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
-    const prop = meta.data.properties?.[REGION_PROP];
-    const regions = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name).filter(Boolean) : []);
+    let regions = [];
+    for (const dbid of dbids) {
+      const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
+      const prop = meta.data.properties?.[REGION_PROP];
+      const part = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name).filter(Boolean) : []);
+      regions = regions.concat(part);
+    }
+    regions = uniq(regions).sort((a,b)=> a.localeCompare(b,'ko'));
+
     setCache(res);
-    res.json({ ok:true, country, regions });
+    res.json({ ok:true, country, regions, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"regions failed", details:e.message || String(e) });
   }
 });
 
+
 // 지역 → 업체 (중복 제거, 실제 데이터 기준)
+// 🔄 교체: 여러 DB query 후 업체 합치기
 app.get("/api/companies/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
     if (!country || !region) return res.status(400).json({ ok:false, error:"country and region are required" });
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.json({ ok:true, country, region, companies: [] });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.json({ ok:true, country, region, companies: [] });
 
     const body = {
       page_size: 100,
       filter: { property: REGION_PROP, select: { equals: region } },
       sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
     };
-    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
-    const results = q.data.results || [];
+    const results = await queryAllDatabases(dbids, body);
 
-    const companies = [...new Set(
+    const companies = uniq(
       results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
-    )];
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({ ok:true, country, region, companies });
+    res.json({ ok:true, country, region, companies, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"companies-by-region failed", details:e.message || String(e) });
   }
 });
 
+
 // 지역 → POE (중복 제거, 실제 데이터 기준)
+// 🔄 교체: 여러 DB query 후 POE 합치기
 app.get("/api/poe/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim();
     if (!country || !region) return res.status(400).json({ ok:false, error:"country and region are required" });
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.json({ ok:true, country, region, poes: [] });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.json({ ok:true, country, region, poes: [] });
 
     const body = {
       page_size: 100,
       filter: { property: REGION_PROP, select: { equals: region } },
       sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
     };
-    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
-    const results = q.data.results || [];
+    const results = await queryAllDatabases(dbids, body);
 
-    const poes = [...new Set(
+    const poes = uniq(
       results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
-    )];
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({ ok:true, country, region, poes });
+    res.json({ ok:true, country, region, poes, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"poe-by-region failed", details:e.message || String(e) });
   }
 });
 
+
 // 업체+지역 → POE (중복 제거, 실제 데이터 기준)
+// 🔄 교체: 여러 DB query 후 POE 합치기
 app.get("/api/poe/by-company", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
@@ -439,8 +509,8 @@ app.get("/api/poe/by-company", async (req, res) => {
     const company = (req.query.company || "").trim();
     if (!country || !region || !company) return res.status(400).json({ ok:false, error:"country, region, company are required" });
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.json({ ok:true, country, region, company, poes: [] });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.json({ ok:true, country, region, company, poes: [] });
 
     const body = {
       page_size: 100,
@@ -450,22 +520,23 @@ app.get("/api/poe/by-company", async (req, res) => {
       ]},
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
     };
-    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
-    const results = q.data.results || [];
+    const results = await queryAllDatabases(dbids, body);
 
-    const poes = [...new Set(
+    const poes = uniq(
       results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
-    )];
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({ ok:true, country, region, company, poes });
+    res.json({ ok:true, country, region, company, poes, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"poe-by-company failed", details:e.message || String(e) });
   }
 });
 
+
 // 화물타입 목록: 나라 단일 DB 메타의 DIPLO_PROP(= "화물타입") multi_select 옵션
 // 업체(필수) [+ 국가/지역] → 화물타입 distinct (multi_select "화물타입")
+// 🔄 교체: 여러 DB query 후 화물타입 합치기
 app.get("/api/cargo-types/by-partner", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
@@ -473,8 +544,8 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     const company = (req.query.company || "").trim();
     if (!country || !company) return res.status(400).json({ ok:false, error:"country and company are required" });
 
-    const dbid = getCountryDbId(country);
-    if (!dbid) return res.json({ ok:true, country, types: [] });
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) return res.json({ ok:true, country, types: [] });
 
     const andFilters = [{ property: COMPANY_PROP, select: { equals: company } }];
     if (region) andFilters.push({ property: REGION_PROP, select: { equals: region } });
@@ -485,19 +556,18 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
     };
 
-    const q = await axios.post(`https://api.notion.com/v1/databases/${dbid}/query`, body, { headers: notionHeaders() });
-    const results = q.data.results || [];
-
-    const types = [...new Set(
+    const results = await queryAllDatabases(dbids, body);
+    const types = uniq(
       results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
-    )];
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({ ok:true, country, region: region || null, company, types });
+    res.json({ ok:true, country, region: region || null, company, types, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"cargo-types-by-partner failed", details:e.message || String(e) });
   }
 });
+
 
 
 
