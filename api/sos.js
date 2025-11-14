@@ -64,11 +64,12 @@ function dateRangeContains(dateProp, targetDateStr) {
 // 요일(한국 시간 기준) - 토/일이면 true
 function isWeekendKST(dateStr) {
   // dateStr: "YYYY-MM-DD"
-  // 한국 시간 00:00 로 고정해서 Date 생성
-  const d = new Date(dateStr + "T00:00:00+09:00");
-  const day = d.getUTCDay(); // 0=일, 6=토
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d)); // UTC 기준 캘린더 날짜
+  const day = dt.getUTCDay();                 // 0=일, 6=토
   return day === 0 || day === 6;
 }
+
 
 // ───────────────────────── 라우트 등록 ─────────────────────────
 
