@@ -73,7 +73,7 @@ function isWeekendKST(dateStr) {
 
 // ───────────────────────── 라우트 등록 ─────────────────────────
 
-module.exports = function registerSosRoutes(app) {
+module.exports = function registerOutboundSosRoutes(app) {
 
   /**
    * GET /api/sos-rate?date=2020-10-01&type=CONSOLE&cbm=25
