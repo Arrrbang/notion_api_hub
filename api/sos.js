@@ -88,9 +88,9 @@ module.exports = function registerSosRoutes(app) {
       const typeStr = (req.query.type || "").trim().toUpperCase(); // CONSOLE/20DRY/40HC
       const cbmStr  = (req.query.cbm  || "").trim();
 
-      if (!dateStr) return res.status(400).json({ ok:false, error:"date(YYYY-MM-DD) 쿼리 필요" });
-      if (!typeStr) return res.status(400).json({ ok:false, error:"type(CONSOLE/20DRY/40HC) 쿼리 필요" });
-      if (!cbmStr)  return res.status(400).json({ ok:false, error:"cbm(1~60) 쿼리 필요" });
+      if (!dateStr) return res.status(400).json({ ok:false, error:"날짜를 선택하세요." });
+      if (!typeStr) return res.status(400).json({ ok:false, error:"컨테이너 타입을 선택하세요." });
+      if (!cbmStr)  return res.status(400).json({ ok:false, error:"CBM을 선택하세요" });
 
       const cbm = Number(cbmStr);
       if (!Number.isInteger(cbm) || cbm < 1 || cbm > 80) {
