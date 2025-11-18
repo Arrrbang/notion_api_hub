@@ -570,12 +570,11 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
 
 
 
-const registerSosRoutes = require("./outboundsos");
-const registerSosRoutes = require("./inboundsos");
+const registerOutboundSosRoutes = require("./outboundsos");
+const registerInboundSosRoutes  = require("./inboundsos");
 
 registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
-
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
 ────────────────────────────────────────────────────────── */
