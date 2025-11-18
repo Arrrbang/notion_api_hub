@@ -78,7 +78,7 @@ module.exports = function registerInboundSosRoutes(app) {
    * 2) type       : CONSOLE / 20DRY / 40HC
    * 3) cbm        : 1~80 정수
    */
-  app.get("/api/sos-rate", async (req, res) => {
+  app.get("/api/sos-rate/inbound", async (req, res) => {
     try {
       const dateStr = (req.query.date || "").trim();   // "2020-10-01"
       const typeStr = (req.query.type || "").trim().toUpperCase(); // CONSOLE/20DRY/40HC
