@@ -570,7 +570,7 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
 
 
 
-const registerSosRoutes = require("./sos");
+const registerSosRoutes = require("./outboundsos");
 registerSosRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
