@@ -80,7 +80,7 @@ module.exports = function registerSosRoutes(app) {
    *
    * 1) date       : YYYY-MM-DD
    * 2) type       : CONSOLE / 20DRY / 40HC
-   * 3) cbm        : 1~60 정수
+   * 3) cbm        : 1~80 정수
    */
   app.get("/api/sos-rate", async (req, res) => {
     try {
@@ -93,8 +93,8 @@ module.exports = function registerSosRoutes(app) {
       if (!cbmStr)  return res.status(400).json({ ok:false, error:"cbm(1~60) 쿼리 필요" });
 
       const cbm = Number(cbmStr);
-      if (!Number.isInteger(cbm) || cbm < 1 || cbm > 60) {
-        return res.status(400).json({ ok:false, error:"cbm 은 1~60 사이의 정수여야 합니다." });
+      if (!Number.isInteger(cbm) || cbm < 1 || cbm > 80) {
+        return res.status(400).json({ ok:false, error:"1~80cbm까지 조회가 가능합니다." });
       }
 
       // 타입 매핑: 프론트 → 노션
@@ -157,48 +157,127 @@ module.exports = function registerSosRoutes(app) {
         const db = b.properties["적용일"]?.date?.start || "";
         return db.localeCompare(da); // 최신(start 큰 것) 우선
       });
-      const page = candidates[0];
-      const props = page.properties || {};
-
-      // CBM 컬럼에서 값 추출 (1~60 숫자 속성)
-      const colKey = String(cbm);
-      const col = props[colKey];
-      let value = null;
-      if (col) {
-        if (col.type === "number")   value = col.number;
-        else if (col.type === "formula" && col.formula)
-          value = col.formula[col.formula.type] ?? null;
-        else if (col.type === "rich_text")
-          value = Number(richTextToPlain(col.rich_text)) || null;
-      }
-
-      const extra   = richTextToPlain(props["추가"]?.rich_text || []);
-      const name    = richTextToPlain(props["이름"]?.title || []);
-      const dateObj = props["적용일"]?.date || null;
-
-      setCache(res);
-      return res.json({
-        ok: true,
-        input: {
-          date: dateStr,
-          type: typeStr,
-          cbm,
-          weekdayType,
-          isWeekend: weekend,
-          isHoliday: holiday
-        },
-        match: {
-          pageId: page.id,
-          name,
-          appliedStart: dateObj?.start || null,
-          appliedEnd  : dateObj?.end   || dateObj?.start || null,
-          notionType,
-          weekdayType,
-          cbmColumn: colKey,
-          value,
-          extra
+        const page = candidates[0];
+        const props = page.properties || {};
+        
+        // 숫자형/포뮬러/텍스트에서도 숫자를 뽑아오는 헬퍼
+        function getNumberFromProperty(p) {
+          if (!p) return null;
+        
+          if (p.type === "number") {
+            return typeof p.number === "number" ? p.number : null;
+          }
+        
+          if (p.type === "formula" && p.formula) {
+            const f = p.formula;
+            if (typeof f.number === "number") return f.number;
+            if (typeof f[f.type] === "number") return f[f.type];
+            if (typeof f.string === "string") {
+              const n = Number(f.string.replace(/,/g, ""));
+              return Number.isNaN(n) ? null : n;
+            }
+            return null;
+          }
+        
+          if (p.type === "rich_text") {
+            const txt = richTextToPlain(p.rich_text || []);
+            if (!txt) return null;
+            const n = Number(txt.replace(/,/g, ""));
+            return Number.isNaN(n) ? null : n;
+          }
+        
+          return null;
         }
-      });
+        
+        // 특정 CBM 숫자 컬럼에서 값 읽기
+        function getCbmColValue(n) {
+          const key = String(n);
+          const col = props[key];
+          return getNumberFromProperty(col);
+        }
+        
+        // 🔹 "추가" 숫자 속성 (1cbm당 추가 단가) 읽기
+        const addProp = props["추가"];
+        const addPerCbm = getNumberFromProperty(addProp) || 0;
+        
+        // 🔹 타입별 기준 CBM 설정
+        //   - GRP / 40 : 60cbm 초과분부터 "추가" 적용
+        //   - 20       : 28cbm 초과분부터 "추가" 적용
+        let baseValue = null;     // 기준값 (28 또는 60 열 값)
+        let computedValue = null; // 최종 계산값
+        
+        if (notionType === "20") {
+          const threshold = 28;
+        
+          if (cbm <= threshold) {
+            // 1~28CBM은 노션 테이블 값 그대로 사용
+            baseValue = getCbmColValue(cbm);
+            computedValue = baseValue;
+          } else {
+            // 28CBM 열을 기준으로, 초과분마다 "추가" 단가를 더함
+            baseValue = getCbmColValue(threshold);
+            if (baseValue != null && addPerCbm) {
+              const extraUnits = cbm - threshold;
+              computedValue = baseValue + addPerCbm * extraUnits;
+            } else {
+              // 기준값이나 단가가 없으면 값 없음 처리
+              computedValue = null;
+            }
+          }
+        } else {
+          // GRP / 40
+          const threshold = 60;
+        
+          if (cbm <= threshold) {
+            // 1~60CBM은 노션 테이블 값 그대로 사용
+            baseValue = getCbmColValue(cbm);
+            computedValue = baseValue;
+          } else {
+            // 60CBM 열을 기준으로, 초과분마다 "추가" 단가를 더함
+            baseValue = getCbmColValue(threshold);
+            if (baseValue != null && addPerCbm) {
+              const extraUnits = cbm - threshold;
+              computedValue = baseValue + addPerCbm * extraUnits;
+            } else {
+              computedValue = null;
+            }
+          }
+        }
+        
+        // 기존 extra/이름/적용일 처리 (메모용 rich_text가 따로 있다면 여기에 바인딩)
+        const extra   = richTextToPlain(props["메모"]?.rich_text || []); // 필요시 속성명 조정
+        const name    = richTextToPlain(props["이름"]?.title || []);
+        const dateObj = props["적용일"]?.date || null;
+        
+        // 최종 value = "추가"까지 다 더해진 값
+        const value = computedValue;
+        
+        setCache(res);
+        return res.json({
+          ok: true,
+          input: {
+            date: dateStr,
+            type: typeStr,
+            cbm,
+            weekdayType,
+            isWeekend: weekend,
+            isHoliday: holiday
+          },
+          match: {
+            pageId: page.id,
+            name,
+            appliedStart: dateObj?.start || null,
+            appliedEnd  : dateObj?.end   || dateObj?.start || null,
+            notionType,
+            weekdayType,
+            cbmColumn: cbm <= 60 ? String(cbm) : (notionType === "20" ? "28" : "60"),
+            baseValue,
+            addPerCbm,
+            value,
+            extra
+          }
+        });
+
     } catch (e) {
       console.error("sos-rate error:", e.response?.data || e);
       res.status(500).json({
