@@ -571,7 +571,10 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
 
 
 const registerSosRoutes = require("./outboundsos");
-registerSosRoutes(app);
+const registerSosRoutes = require("./inboundsos");
+
+registerOutboundSosRoutes(app);
+registerInboundSosRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
