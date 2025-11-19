@@ -358,7 +358,7 @@ app.get("/api/costs/:country", async (req, res) => {
     // 숫자 포맷 병합
     const numberFormats = await fetchMergedNumberFormats(dbids);
 
-   // 필터 구성
+   // 🔧 필터 구성: Notion 쿼리에서는 "지역"만 필터
    const andFilters = [];
 
    if (region) {
@@ -370,20 +370,12 @@ app.get("/api/costs/:country", async (req, res) => {
      });
    }
 
-   if (company) {
-        andFilters.push({
-          or: [
-            { property: COMPANY_PROP, select: { equals: company } },               // 단일 선택일 때
-            { property: COMPANY_PROP, multi_select: { contains: company } }        // 다중 선택일 때
-          ]
-        });
-      }
+   const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
+   if (andFilters.length === 1) body.filter = andFilters[0];
+   else if (andFilters.length > 1) body.filter = { and: andFilters };
 
-   if (roles.length === 1) {
-     andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
-   } else if (roles.length > 1) {
-     andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
-   }
+
+     
    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
    if (andFilters.length === 1) body.filter = andFilters[0];
    else if (andFilters.length > 1) body.filter = { and: andFilters };
