@@ -403,33 +403,37 @@ app.get("/api/costs/:country", async (req, res) => {
       const itemName  = extractTitle(props);
       if (!itemName) continue;
 
-      const regionNames = getRegionNames(props);  // ["A"], ["A","B"], [] 이런 식
+      // 🔹 지역: select/multi_select 모두 지원
+      const regionNames   = getRegionNames(props);  // ["A"], ["A","B"], []
       const primaryRegion = regionNames[0] || null;
-      
-      // 4) 지역 필터:
-      //    - region이 선택된 경우: 같은 지역이 포함되어 있거나 지역 속성이 비어있는 행만 허용
+
+      // 🔹 추가내용
+      const extraVal = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
+
+      // 1) 업체 필터: 드롭다운에서 선택한 업체와 동일한 업체가 있는 행만 허용
+      const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
+      if (company && !companyNames.includes(company)) {
+        continue;
+      }
+
+      // 2) 지역 필터:
+      //    - region이 선택된 경우: regionNames 안에 선택한 region이 있어야 함
+      //    - regionNames가 비어있으면(공통행) 항상 허용
       if (region) {
         if (regionNames.length > 0 && !regionNames.includes(region)) {
           continue;
         }
       }
 
-
-      // 2) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select)
+      // 3) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select라고 가정)
       const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 등
       if (poe && !poeNames.includes(poe)) {
         continue;
       }
 
-      // 3) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
+      // 4) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
       const cargoTypes = getMultiSelectNames(props, DIPLO_PROP);
       if (roles.length > 0 && !roles.some(r => cargoTypes.includes(r))) {
-        continue;
-      }
-
-      // 4) 지역 필터:
-      //    - region이 선택된 경우: 같은 지역이거나 지역 속성이 비어있는 행만 허용
-      if (region && regionName && regionName !== region) {
         continue;
       }
 
@@ -442,11 +446,12 @@ app.get("/api/costs/:country", async (req, res) => {
         numVal = computeConsoleCost(props, cbm);
       }
 
+      // 🔹 결과표용 한 줄
       const rowObj = { 
-        item: itemName, 
-        region: regionName, 
-        poe: poeNames.join(", "),
-        extra: extraVal 
+        item:   itemName, 
+        region: primaryRegion,                 // 표에 표시되는 지역은 primaryRegion
+        poe:    poeNames.join(", "),
+        extra:  extraVal 
       };
 
       // allowed (20FT, 40HC …) 값들 + CBM 관련 값들 채우기 (기존 유지)
@@ -459,28 +464,31 @@ app.get("/api/costs/:country", async (req, res) => {
       rowObj[type]       = numVal;
       rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
-      // 중복 방지 키 (기존 그대로)
+      // 🔹 중복 방지 키: 같은 item + 같은 (표시용) 지역이면 한 번만
       const dedupKey = `${itemName}__${primaryRegion || "기타"}`;
       if (!seen.has(dedupKey)) {
         seen.add(dedupKey);
         rows.push(rowObj);
       }
 
-
+      // 🔹 values / extras 집계 (기존 UI용 구조 유지)
       if (region) {
-        if (!regionName || regionName === region) {
-          // 마지막 값이 덮어쓰는 우측 우선 정책
+        // 특정 지역 모드:
+        //   - primaryRegion이 없거나(region 공통) == 선택 region인 경우만 집계
+        if (!primaryRegion || primaryRegion === region) {
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
       } else {
-        const key = regionName || "기타";
+        // 전체 지역 모드:
+        const key = primaryRegion || "기타";
         if (!valuesByRegion[key]) valuesByRegion[key] = {};
         if (!extrasByRegion[key]) extrasByRegion[key] = {};
         valuesByRegion[key][itemName] = numVal;
         extrasByRegion[key][itemName] = extraVal ?? null;
       }
     }
+
      
     rows.sort((a, b) => {
       const ao = a[ORDER_PROP] ?? 0;
