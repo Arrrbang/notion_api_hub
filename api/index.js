@@ -372,6 +372,7 @@ app.get("/api/costs/:country", async (req, res) => {
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
       rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
       rowObj[type]       = numVal;
+      rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
       // 중복 방지 키
       const dedupKey = `${itemName}__${regionName || "기타"}`;
