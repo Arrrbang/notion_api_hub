@@ -706,7 +706,6 @@ function registerDestinationRoutes(app) {
     }
   });
 
-// 지역 → 업체
 app.get("/api/companies/by-region", async (req, res) => {
   try {
     const country = (req.query.country || "").trim();
@@ -725,7 +724,6 @@ app.get("/api/companies/by-region", async (req, res) => {
       return res.json({ ok: true, country, region, companies: [] });
     }
 
-    // 🔹 Notion 쿼리는 정렬만 두고 전체 페이지 가져오기
     const body = {
       page_size: 100,
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
@@ -733,18 +731,11 @@ app.get("/api/companies/by-region", async (req, res) => {
 
     const results = await queryAllDatabases(dbids, body);
 
-    // 🔹 지역 이름 정규화 함수 (공백/대소문자 차이 흡수)
-    const normalizeRegionName = (s) =>
-      (s || "").trim().replace(/\s+/g, " ").toLowerCase();
-
-    const targetNorm = normalizeRegionName(region);
-
-    // 🔹 REGION_PROP 에 선택된 region 이 "사실상" 포함된 행만 사용
+    // ✅ 원래 쓰던 로직: region 문자열 완전 일치하는 행만 사용
     const filtered = results.filter(page => {
       const props       = page.properties || {};
-      const regionNames = getRegionNames(props);      // ["Agoura Hills CA", ...]
-      const normList    = regionNames.map(normalizeRegionName);
-      return normList.includes(targetNorm);
+      const regionNames = getRegionNames(props);   // ["Agoura Hills CA", ...]
+      return regionNames.includes(region);
     });
 
     const companies = uniq(
@@ -761,18 +752,28 @@ app.get("/api/companies/by-region", async (req, res) => {
       dbCount: dbids.length
     };
 
-    // 🔍 debug=1 이면 샘플 데이터도 같이 내려줌
+    // 🔍 debug=1 일 때만, region "비슷한" 행들을 따로 보여주는 용도 (프론트에서는 안 씀)
     if (debugOn) {
+      const norm = (s) => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const targetNorm = norm(region);
+
+      const candidates = results
+        .map(page => {
+          const props        = page.properties || {};
+          const title        = extractTitle(props);
+          const regionNames  = getRegionNames(props);
+          const companiesRow = getSelectOrMultiNames(props, COMPANY_PROP);
+          const matched = regionNames.some(r => norm(r).includes(targetNorm));
+          return { title, regions: regionNames, companies: companiesRow, matched };
+        })
+        .filter(row => row.matched)
+        .slice(0, 50);
+
       payload.debug = {
         totalPages: results.length,
         filteredPages: filtered.length,
-        sample: results.slice(0, 40).map(p => {
-          const props        = p.properties || {};
-          const title        = extractTitle(props);
-          const regions      = getRegionNames(props);
-          const companiesRow = getSelectOrMultiNames(props, COMPANY_PROP);
-          return { title, regions, companies: companiesRow };
-        })
+        candidatesCount: candidates.length,
+        candidates
       };
     }
 
@@ -785,9 +786,6 @@ app.get("/api/companies/by-region", async (req, res) => {
     });
   }
 });
-
-
-
 
 
   // 지역 → POE
