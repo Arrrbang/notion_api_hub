@@ -42,6 +42,11 @@ function safeLoadJson(relPathFromRoot) {
   }
 }
 
+function getRegionNames(props) {
+  return getSelectOrMultiNames(props, REGION_PROP);  // 이미 있는 헬퍼 재사용
+}
+
+
 function getAllowed() {
   if (process.env.ALLOWED_TYPES_JSON) {
     try { return JSON.parse(process.env.ALLOWED_TYPES_JSON); } catch {}
@@ -364,11 +369,17 @@ app.get("/api/costs/:country", async (req, res) => {
    if (region) {
      andFilters.push({
        or: [
+         // 단일 선택 지역
          { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, select: { is_empty: true } }
+         // 다중 선택 지역에 해당 region 포함
+         { property: REGION_PROP, multi_select: { contains: region } },
+         // 지역 공란 (공통)
+         { property: REGION_PROP, select: { is_empty: true } },
+         { property: REGION_PROP, multi_select: { is_empty: true } }
        ]
      });
    }
+
 
    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
    if (andFilters.length === 1) body.filter = andFilters[0];
@@ -392,14 +403,17 @@ app.get("/api/costs/:country", async (req, res) => {
       const itemName  = extractTitle(props);
       if (!itemName) continue;
 
-      const regionName = getSelectName(props, REGION_PROP);
-      const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
-
-      // 1) 업체 필터: 드롭다운 업체와 동일한 업체가 있는 행만 허용
-      const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
-      if (company && !companyNames.includes(company)) {
-        continue;
+      const regionNames = getRegionNames(props);  // ["A"], ["A","B"], [] 이런 식
+      const primaryRegion = regionNames[0] || null;
+      
+      // 4) 지역 필터:
+      //    - region이 선택된 경우: 같은 지역이 포함되어 있거나 지역 속성이 비어있는 행만 허용
+      if (region) {
+        if (regionNames.length > 0 && !regionNames.includes(region)) {
+          continue;
+        }
       }
+
 
       // 2) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select)
       const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 등
@@ -446,7 +460,7 @@ app.get("/api/costs/:country", async (req, res) => {
       rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
       // 중복 방지 키 (기존 그대로)
-      const dedupKey = `${itemName}__${regionName || "기타"}`;
+      const dedupKey = `${itemName}__${primaryRegion || "기타"}`;
       if (!seen.has(dedupKey)) {
         seen.add(dedupKey);
         rows.push(rowObj);
@@ -506,8 +520,16 @@ app.get("/api/regions/:country", async (req, res) => {
     for (const dbid of dbids) {
       const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
       const prop = meta.data.properties?.[REGION_PROP];
-      const part = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name).filter(Boolean) : []);
+      let part = [];
+      
+      if (prop?.type === "select") {
+        part = (prop.select?.options || []).map(o => o.name).filter(Boolean);
+      } else if (prop?.type === "multi_select") {
+        part = (prop.multi_select?.options || []).map(o => o.name).filter(Boolean);
+      }
+      
       regions = regions.concat(part);
+
     }
     regions = uniq(regions).sort((a,b)=> a.localeCompare(b,'ko'));
 
@@ -530,11 +552,17 @@ app.get("/api/companies/by-region", async (req, res) => {
     const dbids = getCountryDbIds(country);
     if (dbids.length === 0) return res.json({ ok:true, country, region, companies: [] });
 
-    const body = {
-      page_size: 100,
-      filter: { property: REGION_PROP, select: { equals: region } },
-      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
-    };
+   const body = {
+     page_size: 100,
+     filter: {
+       or: [
+         { property: REGION_PROP, select: { equals: region } },
+         { property: REGION_PROP, multi_select: { contains: region } }
+       ]
+     },
+     sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+   };
+
     const results = await queryAllDatabases(dbids, body);
 
    const companies = uniq(
@@ -560,11 +588,17 @@ app.get("/api/poe/by-region", async (req, res) => {
     const dbids = getCountryDbIds(country);
     if (dbids.length === 0) return res.json({ ok:true, country, region, poes: [] });
 
-    const body = {
-      page_size: 100,
-      filter: { property: REGION_PROP, select: { equals: region } },
-      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
-    };
+   const body = {
+     page_size: 100,
+     filter: {
+       or: [
+         { property: REGION_PROP, select: { equals: region } },
+         { property: REGION_PROP, multi_select: { contains: region } }
+       ]
+     },
+     sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+   };
+
     const results = await queryAllDatabases(dbids, body);
 
    const poes = uniq(
@@ -594,9 +628,15 @@ app.get("/api/poe/by-company", async (req, res) => {
     const body = {
       page_size: 100,
       filter: { and: [
-        { property: REGION_PROP,  select: { equals: region } },
+        {
+          or: [
+            { property: REGION_PROP, select: { equals: region } },
+            { property: REGION_PROP, multi_select: { contains: region } }
+          ]
+        },
         { property: COMPANY_PROP, select: { equals: company } }
       ]},
+
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
     };
     const results = await queryAllDatabases(dbids, body);
@@ -636,14 +676,17 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     ];
 
     // 🔹 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
-    if (region) {
-      andFilters.push({
-        or: [
-          { property: REGION_PROP, select: { equals: region } },
-          { property: REGION_PROP, select: { is_empty: true } }
-        ]
-      });
-    }
+   if (region) {
+     andFilters.push({
+       or: [
+         { property: REGION_PROP, select: { equals: region } },
+         { property: REGION_PROP, multi_select: { contains: region } },
+         { property: REGION_PROP, select: { is_empty: true } },
+         { property: REGION_PROP, multi_select: { is_empty: true } }
+       ]
+     });
+   }
+
 
     const body = {
       page_size: 100,
