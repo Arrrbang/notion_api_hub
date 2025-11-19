@@ -722,8 +722,7 @@ function registerDestinationRoutes(app) {
          return res.json({ ok: true, country, region, companies: [] });
        }
    
-       // 🔹 지역 필터를 Notion 쿼리에 걸지 않고 전체를 가져온 뒤,
-       //    JS에서 지역 필터링 (공통행 포함)으로 처리
+       // 🔹 Notion 쿼리는 정렬만 두고 전체 페이지 가져오기
        const body = {
          page_size: 100,
          sorts: [{ property: ORDER_PROP, direction: "ascending" }]
@@ -732,13 +731,11 @@ function registerDestinationRoutes(app) {
        const results = await queryAllDatabases(dbids, body);
    
        // 🔹 지역 필터링
-       //   - 지역이 비어 있는 행(공통행)은 항상 포함
-       //   - 그 외에는 region을 포함하는 행만 포함
+       //   - 다중선택 속성 REGION_PROP 에 선택된 region 이 포함된 행만 사용
        const filtered = results.filter(page => {
-         const props        = page.properties || {};
-         const regionNames  = getRegionNames(props); // ["A"], ["A","B"], []
-         if (regionNames.length === 0) return true;      // 공통행
-         return regionNames.includes(region);            // 선택 지역이 포함된 행
+         const props       = page.properties || {};
+         const regionNames = getRegionNames(props);   // ["서울", "부산"] 이런 식
+         return regionNames.includes(region);
        });
    
        const companies = uniq(
@@ -761,6 +758,7 @@ function registerDestinationRoutes(app) {
        });
      }
    });
+
 
 
   // 지역 → POE
