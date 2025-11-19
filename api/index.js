@@ -508,9 +508,9 @@ app.get("/api/companies/by-region", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-    const companies = uniq(
-      results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
-    ).sort((a,b)=> a.localeCompare(b,'ko'));
+   const companies = uniq(
+     results.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
+   ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, companies, dbCount: dbids.length });
@@ -597,8 +597,17 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     const dbids = getCountryDbIds(country);
     if (dbids.length === 0) return res.json({ ok:true, country, types: [] });
 
-    const andFilters = [{ property: COMPANY_PROP, select: { equals: company } }];
-    if (region) andFilters.push({ property: REGION_PROP, select: { equals: region } });
+   const andFilters = [{
+     or: [
+       { property: COMPANY_PROP, select: { equals: company } },            // 단일 선택 업체
+       { property: COMPANY_PROP, multi_select: { contains: company } }     // 다중 선택 업체
+     ]
+   }];
+   
+   if (region) {
+     andFilters.push({ property: REGION_PROP, select: { equals: region } });
+   }
+
 
     const body = {
       page_size: 100,
