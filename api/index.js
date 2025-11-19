@@ -184,9 +184,21 @@ function valueFromColumn(properties, columnName) {
 const getSelectName = (props, key) => (props?.[key]?.type==="select" ? (props[key].select?.name || null) : null);
 const getMultiSelectNames = (props, key) => {
   const p = props?.[key];
-  if (!p || p.type!=="multi_select") return [];
-  return (p.multi_select||[]).map(o=>o.name).filter(Boolean);
+  if (!p) return [];
+
+  // multi_select (정상 케이스)
+  if (p.type === "multi_select") {
+    return (p.multi_select || []).map(o => o.name).filter(Boolean);
+  }
+
+  // 혹시라도 select로 되어 있는 DB가 섞여 있는 경우도 방어
+  if (p.type === "select") {
+    return [p.select?.name].filter(Boolean);
+  }
+
+  return [];
 };
+
 
 // select / multi_select 둘 다 지원하는 이름 추출 (POE 전용)
 function getSelectOrMultiNames(props, key) {
@@ -592,27 +604,29 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim(); // 선택
     const company = (req.query.company || "").trim();
-    if (!country || !company) return res.status(400).json({ ok:false, error:"country and company are required" });
+    if (!country || !company) {
+      return res.status(400).json({ ok:false, error:"country and company are required" });
+    }
 
     const dbids = getCountryDbIds(country);
-    if (dbids.length === 0) return res.json({ ok:true, country, types: [] });
+    if (dbids.length === 0) {
+      return res.json({ ok:true, country, region: region || null, company, types: [], dbCount: 0 });
+    }
 
-   const andFilters = [{
-     or: [
-       { property: COMPANY_PROP, select: { equals: company } },
-       { property: COMPANY_PROP, multi_select: { contains: company } }
-     ]
-   }];
-   
-   // 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
-   if (region) {
-     andFilters.push({
-       or: [
-         { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, select: { is_empty: true } }
-       ]
-     });
-   }
+    // 🔹 업체는 select 기준으로만 필터 (업체가 multi_select 라는 말은 없었으니까)
+    const andFilters = [
+      { property: COMPANY_PROP, select: { equals: company } }
+    ];
+
+    // 🔹 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
+    if (region) {
+      andFilters.push({
+        or: [
+          { property: REGION_PROP, select: { equals: region } },
+          { property: REGION_PROP, select: { is_empty: true } }
+        ]
+      });
+    }
 
     const body = {
       page_size: 100,
@@ -621,16 +635,26 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     };
 
     const results = await queryAllDatabases(dbids, body);
+
+    // 🔹 화물타입은 항상 multi_select (혹시 select인 DB가 있으면 1번만 읽힘)
     const types = uniq(
       results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
     ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({ ok:true, country, region: region || null, company, types, dbCount: dbids.length });
+    res.json({
+      ok: true,
+      country,
+      region: region || null,
+      company,
+      types,
+      dbCount: dbids.length
+    });
   } catch (e) {
     res.status(500).json({ ok:false, error:"cargo-types-by-partner failed", details:e.message || String(e) });
   }
 });
+
 
 
 
