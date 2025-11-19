@@ -410,7 +410,6 @@ app.get("/api/costs/:country", async (req, res) => {
         numVal = computeConsoleCost(props, cbm);
       }
 
-      const poeNames = getSelectOrMultiNames(props, POE_PROP);
       const rowObj = { 
         item: itemName, 
         region: regionName, 
