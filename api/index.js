@@ -367,15 +367,6 @@ app.get("/api/costs/:country", async (req, res) => {
         });
       }
 
-   if (poe) {
-     andFilters.push({
-       or: [
-         { property: POE_PROP, select: { equals: poe } },              // 혹시 아직 select인 DB 대응
-         { property: POE_PROP, multi_select: { contains: poe } }       // 멀티선택 대응
-       ]
-     });
-   }
-
    if (roles.length === 1) {
      andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
    } else if (roles.length > 1) {
@@ -405,6 +396,14 @@ app.get("/api/costs/:country", async (req, res) => {
 
       const regionName = getSelectName(props, REGION_PROP);
       const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
+
+      const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 이런 식
+     if (poe) {
+       // poe가 선택된 경우: 이 행의 poeNames 안에 poe가 없으면 스킵
+       if (!poeNames.includes(poe)) {
+         continue;
+       }
+     }
 
       let numVal = (type === "CONSOLE") ? null : pickNumber(valueFromColumn(props, type));
       if (type === "CONSOLE" || ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))) {
