@@ -706,83 +706,86 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  // 지역 → 업체
-  app.get("/api/companies/by-region", async (req, res) => {
-    try {
-      const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim();
-      const debug   = ((req.query.debug || "").toString().toLowerCase());
+// 지역 → 업체
+app.get("/api/companies/by-region", async (req, res) => {
+  try {
+    const country = (req.query.country || "").trim();
+    const region  = (req.query.region  || "").trim();
+    const debug   = ((req.query.debug || "").toString().toLowerCase());
+    const debugOn = ["1","true","yes","y"].includes(debug);
 
-      const debugOn = ["1","true","yes","y"].includes(debug);
-
-      if (!country || !region) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "country and region are required" });
-      }
-
-      const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok: true, country, region, companies: [] });
-      }
-
-      // 🔹 Notion 쿼리는 정렬만 두고 전체 페이지 가져오기
-      const body = {
-        page_size: 100,
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-      };
-
-      const results = await queryAllDatabases(dbids, body);
-
-      // 🔹 지역 필터링: REGION_PROP 에 선택된 region 이 포함된 행만 사용
-      const filtered = results.filter(page => {
-        const props       = page.properties || {};
-        const regionNames = getRegionNames(props);   // ["서울", "부산"] 이런 식
-        return regionNames.includes(region);
-      });
-
-      const companies = uniq(
-        filtered.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
-      ).sort((a, b) => a.localeCompare(b, "ko"));
-
-      setCache(res);
-
-      const payload = {
-        ok: true,
-        country,
-        region,
-        companies,
-        dbCount: dbids.length
-      };
-
-      // 🔍 debug=1 이면 어떤 행들이 필터되었는지 같이 내려줌
-      if (debugOn) {
-        payload.debug = {
-          totalPages: results.length,
-          filteredPages: filtered.length,
-          items: filtered.slice(0, 30).map(p => {
-            const props        = p.properties || {};
-            const title        = extractTitle(props);
-            const regionNames  = getRegionNames(props);
-            const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
-            return {
-              title,
-              regions: regionNames,
-              companies: companyNames
-            };
-          })
-        };
-      }
-
-      res.json(payload);
-    } catch (e) {
-      res.status(500).json({
-        ok: false,
-        error: "companies-by-region failed",
-        details: e.message || String(e)
-      });
+    if (!country || !region) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "country and region are required" });
     }
-  });
+
+    const dbids = getCountryDbIds(country);
+    if (dbids.length === 0) {
+      return res.json({ ok: true, country, region, companies: [] });
+    }
+
+    // 🔹 Notion 쿼리는 정렬만 두고 전체 페이지 가져오기
+    const body = {
+      page_size: 100,
+      sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+    };
+
+    const results = await queryAllDatabases(dbids, body);
+
+    // 🔹 지역 이름 정규화 함수 (공백/대소문자 차이 흡수)
+    const normalizeRegionName = (s) =>
+      (s || "").trim().replace(/\s+/g, " ").toLowerCase();
+
+    const targetNorm = normalizeRegionName(region);
+
+    // 🔹 REGION_PROP 에 선택된 region 이 "사실상" 포함된 행만 사용
+    const filtered = results.filter(page => {
+      const props       = page.properties || {};
+      const regionNames = getRegionNames(props);      // ["Agoura Hills CA", ...]
+      const normList    = regionNames.map(normalizeRegionName);
+      return normList.includes(targetNorm);
+    });
+
+    const companies = uniq(
+      filtered.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
+    ).sort((a, b) => a.localeCompare(b, "ko"));
+
+    setCache(res);
+
+    const payload = {
+      ok: true,
+      country,
+      region,
+      companies,
+      dbCount: dbids.length
+    };
+
+    // 🔍 debug=1 이면 샘플 데이터도 같이 내려줌
+    if (debugOn) {
+      payload.debug = {
+        totalPages: results.length,
+        filteredPages: filtered.length,
+        sample: results.slice(0, 40).map(p => {
+          const props        = p.properties || {};
+          const title        = extractTitle(props);
+          const regions      = getRegionNames(props);
+          const companiesRow = getSelectOrMultiNames(props, COMPANY_PROP);
+          return { title, regions, companies: companiesRow };
+        })
+      };
+    }
+
+    res.json(payload);
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: "companies-by-region failed",
+      details: e.message || String(e)
+    });
+  }
+});
+
 
 
 
