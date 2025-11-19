@@ -187,6 +187,22 @@ const getMultiSelectNames = (props, key) => {
   if (!p || p.type!=="multi_select") return [];
   return (p.multi_select||[]).map(o=>o.name).filter(Boolean);
 };
+
+// select / multi_select 둘 다 지원하는 이름 추출 (POE 전용)
+function getSelectOrMultiNames(props, key) {
+  const p = props?.[key];
+  if (!p) return [];
+  // 단일 선택
+  if (p.type === "select") {
+    return [p.select?.name].filter(Boolean);
+  }
+  // 다중 선택
+  if (p.type === "multi_select") {
+    return (p.multi_select || []).map(o => o.name).filter(Boolean);
+  }
+  return [];
+}
+
 function getNumberProp(props, key) {
   const col = props?.[key];
   if (!col) return null;
@@ -507,9 +523,9 @@ app.get("/api/poe/by-region", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-    const poes = uniq(
-      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
-    ).sort((a,b)=> a.localeCompare(b,'ko'));
+   const poes = uniq(
+     results.flatMap(p => getSelectOrMultiNames(p.properties, POE_PROP))
+   ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, poes, dbCount: dbids.length });
@@ -541,9 +557,9 @@ app.get("/api/poe/by-company", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-    const poes = uniq(
-      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
-    ).sort((a,b)=> a.localeCompare(b,'ko'));
+   const poes = uniq(
+     results.flatMap(p => getSelectOrMultiNames(p.properties, POE_PROP))
+   ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, company, poes, dbCount: dbids.length });
