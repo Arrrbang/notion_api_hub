@@ -332,14 +332,22 @@ app.get("/api/costs/:country", async (req, res) => {
    const andFilters = [];
    
    // 🔧 수정: 선택한 지역 OR 지역 비어있는 행 둘 다 포함
-   if (region) {
-     andFilters.push({
-       or: [
-         { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, select: { is_empty: true } }
-       ]
-     });
-   }
+      if (region) {
+        andFilters.push({
+          or: [
+            // 단일 선택일 경우
+            { property: REGION_PROP, select: { equals: region } },
+      
+            // 멀티 선택일 경우
+            { property: REGION_PROP, multi_select: { contains: region } },
+      
+            // 지역이 비어 있는 공통 비용
+            { property: REGION_PROP, select: { is_empty: true } },
+            { property: REGION_PROP, multi_select: { is_empty: true } }
+          ]
+        });
+      }
+
    
    if (company) {
         andFilters.push({
