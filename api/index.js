@@ -375,12 +375,6 @@ app.get("/api/costs/:country", async (req, res) => {
    else if (andFilters.length > 1) body.filter = { and: andFilters };
 
 
-     
-   const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
-   if (andFilters.length === 1) body.filter = andFilters[0];
-   else if (andFilters.length > 1) body.filter = { and: andFilters };
-
-
     // 여러 DB에서 결과 수집
     const results = await queryAllDatabases(dbids, body);
 
