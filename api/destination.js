@@ -706,55 +706,62 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  // 지역 → 업체
-  app.get("/api/companies/by-region", async (req, res) => {
-    try {
-      const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim();
-      if (!country || !region) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "country and region are required" });
-      }
+   // 지역 → 업체
+   app.get("/api/companies/by-region", async (req, res) => {
+     try {
+       const country = (req.query.country || "").trim();
+       const region  = (req.query.region  || "").trim();
+       if (!country || !region) {
+         return res
+           .status(400)
+           .json({ ok: false, error: "country and region are required" });
+       }
+   
+       const dbids = getCountryDbIds(country);
+       if (dbids.length === 0) {
+         return res.json({ ok: true, country, region, companies: [] });
+       }
+   
+       // 🔹 지역 필터를 Notion 쿼리에 걸지 않고 전체를 가져온 뒤,
+       //    JS에서 지역 필터링 (공통행 포함)으로 처리
+       const body = {
+         page_size: 100,
+         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+       };
+   
+       const results = await queryAllDatabases(dbids, body);
+   
+       // 🔹 지역 필터링
+       //   - 지역이 비어 있는 행(공통행)은 항상 포함
+       //   - 그 외에는 region을 포함하는 행만 포함
+       const filtered = results.filter(page => {
+         const props        = page.properties || {};
+         const regionNames  = getRegionNames(props); // ["A"], ["A","B"], []
+         if (regionNames.length === 0) return true;      // 공통행
+         return regionNames.includes(region);            // 선택 지역이 포함된 행
+       });
+   
+       const companies = uniq(
+         filtered.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
+       ).sort((a, b) => a.localeCompare(b, "ko"));
+   
+       setCache(res);
+       res.json({
+         ok: true,
+         country,
+         region,
+         companies,
+         dbCount: dbids.length
+       });
+     } catch (e) {
+       res.status(500).json({
+         ok: false,
+         error: "companies-by-region failed",
+         details: e.message || String(e)
+       });
+     }
+   });
 
-      const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok: true, country, region, companies: [] });
-      }
-
-      const body = {
-        page_size: 100,
-        filter: {
-          or: [
-            { property: REGION_PROP, select: { equals: region } },
-            { property: REGION_PROP, multi_select: { contains: region } }
-          ]
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-      };
-
-      const results = await queryAllDatabases(dbids, body);
-
-      const companies = uniq(
-        results.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
-      ).sort((a, b) => a.localeCompare(b, "ko"));
-
-      setCache(res);
-      res.json({
-        ok: true,
-        country,
-        region,
-        companies,
-        dbCount: dbids.length
-      });
-    } catch (e) {
-      res.status(500).json({
-        ok: false,
-        error: "companies-by-region failed",
-        details: e.message || String(e)
-      });
-    }
-  });
 
   // 지역 → POE
   app.get("/api/poe/by-region", async (req, res) => {
