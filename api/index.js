@@ -605,7 +605,12 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
    }];
    
    if (region) {
-     andFilters.push({ property: REGION_PROP, select: { equals: region } });
+     andFilters.push({
+       or: [
+         { property: REGION_PROP, select: { equals: region } },   // 선택한 지역
+         { property: REGION_PROP, select: { is_empty: true } }    // 지역 공란(공통)
+       ]
+     });
    }
 
 
