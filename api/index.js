@@ -599,20 +599,20 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
 
    const andFilters = [{
      or: [
-       { property: COMPANY_PROP, select: { equals: company } },            // 단일 선택 업체
-       { property: COMPANY_PROP, multi_select: { contains: company } }     // 다중 선택 업체
+       { property: COMPANY_PROP, select: { equals: company } },
+       { property: COMPANY_PROP, multi_select: { contains: company } }
      ]
    }];
    
+   // 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
    if (region) {
      andFilters.push({
        or: [
-         { property: REGION_PROP, select: { equals: region } },   // 선택한 지역
-         { property: REGION_PROP, select: { is_empty: true } }    // 지역 공란(공통)
+         { property: REGION_PROP, select: { equals: region } },
+         { property: REGION_PROP, select: { is_empty: true } }
        ]
      });
    }
-
 
     const body = {
       page_size: 100,
