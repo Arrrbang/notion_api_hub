@@ -184,37 +184,9 @@ function valueFromColumn(properties, columnName) {
 const getSelectName = (props, key) => (props?.[key]?.type==="select" ? (props[key].select?.name || null) : null);
 const getMultiSelectNames = (props, key) => {
   const p = props?.[key];
-  if (!p) return [];
-
-  // multi_select (정상 케이스)
-  if (p.type === "multi_select") {
-    return (p.multi_select || []).map(o => o.name).filter(Boolean);
-  }
-
-  // 혹시라도 select로 되어 있는 DB가 섞여 있는 경우도 방어
-  if (p.type === "select") {
-    return [p.select?.name].filter(Boolean);
-  }
-
-  return [];
+  if (!p || p.type!=="multi_select") return [];
+  return (p.multi_select||[]).map(o=>o.name).filter(Boolean);
 };
-
-
-// select / multi_select 둘 다 지원하는 이름 추출 (POE 전용)
-function getSelectOrMultiNames(props, key) {
-  const p = props?.[key];
-  if (!p) return [];
-  // 단일 선택
-  if (p.type === "select") {
-    return [p.select?.name].filter(Boolean);
-  }
-  // 다중 선택
-  if (p.type === "multi_select") {
-    return (p.multi_select || []).map(o => o.name).filter(Boolean);
-  }
-  return [];
-}
-
 function getNumberProp(props, key) {
   const col = props?.[key];
   if (!col) return null;
@@ -341,11 +313,9 @@ app.get("/api/costs/:country", async (req, res) => {
     const region    = (req.query.region || req.query.pick || req.query.select || "").trim();
     const company   = (req.query.company || "").trim();
     const rolesStr  = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
-    const poe       = (req.query.poe || "").trim();
     const roles     = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
     const cbmQ      = Number(req.query.cbm);
     const cbm       = Number.isFinite(cbmQ) ? cbmQ : null;
-
 
     const type = typeParam || allowed[0];
     if (type !== "CONSOLE" && !allowed.includes(type)) {
@@ -358,9 +328,10 @@ app.get("/api/costs/:country", async (req, res) => {
     // 숫자 포맷 병합
     const numberFormats = await fetchMergedNumberFormats(dbids);
 
-   // 🔧 필터 구성: Notion 쿼리에서는 "지역"만 필터
+   // 필터 구성
    const andFilters = [];
-
+   
+   // 🔧 수정: 선택한 지역 OR 지역 비어있는 행 둘 다 포함
    if (region) {
      andFilters.push({
        or: [
@@ -369,13 +340,13 @@ app.get("/api/costs/:country", async (req, res) => {
        ]
      });
    }
-
-
-
-
-
-
-
+   
+   if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
+   if (roles.length === 1) {
+     andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
+   } else if (roles.length > 1) {
+     andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
+   }
    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
    if (andFilters.length === 1) body.filter = andFilters[0];
    else if (andFilters.length > 1) body.filter = { and: andFilters };
@@ -401,63 +372,25 @@ app.get("/api/costs/:country", async (req, res) => {
       const regionName = getSelectName(props, REGION_PROP);
       const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
 
-      // 1) 업체 필터: 드롭다운 업체와 동일한 업체가 있는 행만 허용
-      const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
-      if (company && !companyNames.includes(company)) {
-        continue;
-      }
-
-      // 2) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select)
-      const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 등
-      if (poe && !poeNames.includes(poe)) {
-        continue;
-      }
-
-      // 3) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
-      const cargoTypes = getMultiSelectNames(props, DIPLO_PROP);
-      if (roles.length > 0 && !roles.some(r => cargoTypes.includes(r))) {
-        continue;
-      }
-
-      // 4) 지역 필터:
-      //    - region이 선택된 경우: 같은 지역이거나 지역 속성이 비어있는 행만 허용
-      if (region && regionName && regionName !== region) {
-        continue;
-      }
-
-      // 5) 값 계산 로직 (CONSOLE/20FT/40HC) — 기존 그대로
       let numVal = (type === "CONSOLE") ? null : pickNumber(valueFromColumn(props, type));
-      if (
-        type === "CONSOLE" ||
-        ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))
-      ) {
+      if (type === "CONSOLE" || ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))) {
         numVal = computeConsoleCost(props, cbm);
       }
 
-      const rowObj = { 
-        item: itemName, 
-        region: regionName, 
-        poe: poeNames.join(", "),
-        extra: extraVal 
-      };
-
-      // allowed (20FT, 40HC …) 값들 + CBM 관련 값들 채우기 (기존 유지)
-      for (const key of allowed) {
-        rowObj[key] = pickNumber(valueFromColumn(props, key));
-      }
+      const rowObj = { item: itemName, region: regionName, extra: extraVal };
+      for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
       rowObj["MIN CBM"]  = getNumberProp(props, MIN_CBM_PROP);
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
       rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
       rowObj[type]       = numVal;
       rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
-      // 중복 방지 키 (기존 그대로)
+      // 중복 방지 키
       const dedupKey = `${itemName}__${regionName || "기타"}`;
       if (!seen.has(dedupKey)) {
         seen.add(dedupKey);
         rows.push(rowObj);
       }
-
 
       if (region) {
         if (!regionName || regionName === region) {
@@ -473,12 +406,6 @@ app.get("/api/costs/:country", async (req, res) => {
         extrasByRegion[key][itemName] = extraVal ?? null;
       }
     }
-
-    rows.sort((a, b) => {
-      const ao = a[ORDER_PROP] ?? 0;
-      const bo = b[ORDER_PROP] ?? 0;
-      return ao - bo;
-    });
 
     setCache(res);
     res.json({
@@ -543,9 +470,9 @@ app.get("/api/companies/by-region", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-   const companies = uniq(
-     results.flatMap(p => getSelectOrMultiNames(p.properties, COMPANY_PROP))
-   ).sort((a,b)=> a.localeCompare(b,'ko'));
+    const companies = uniq(
+      results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, companies, dbCount: dbids.length });
@@ -573,9 +500,9 @@ app.get("/api/poe/by-region", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-   const poes = uniq(
-     results.flatMap(p => getSelectOrMultiNames(p.properties, POE_PROP))
-   ).sort((a,b)=> a.localeCompare(b,'ko'));
+    const poes = uniq(
+      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, poes, dbCount: dbids.length });
@@ -607,9 +534,9 @@ app.get("/api/poe/by-company", async (req, res) => {
     };
     const results = await queryAllDatabases(dbids, body);
 
-   const poes = uniq(
-     results.flatMap(p => getSelectOrMultiNames(p.properties, POE_PROP))
-   ).sort((a,b)=> a.localeCompare(b,'ko'));
+    const poes = uniq(
+      results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+    ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
     res.json({ ok:true, country, region, company, poes, dbCount: dbids.length });
@@ -627,29 +554,13 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     const country = (req.query.country || "").trim();
     const region  = (req.query.region  || "").trim(); // 선택
     const company = (req.query.company || "").trim();
-    if (!country || !company) {
-      return res.status(400).json({ ok:false, error:"country and company are required" });
-    }
+    if (!country || !company) return res.status(400).json({ ok:false, error:"country and company are required" });
 
     const dbids = getCountryDbIds(country);
-    if (dbids.length === 0) {
-      return res.json({ ok:true, country, region: region || null, company, types: [], dbCount: 0 });
-    }
+    if (dbids.length === 0) return res.json({ ok:true, country, types: [] });
 
-    // 🔹 업체는 select 기준으로만 필터 (업체가 multi_select 라는 말은 없었으니까)
-    const andFilters = [
-      { property: COMPANY_PROP, select: { equals: company } }
-    ];
-
-    // 🔹 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
-    if (region) {
-      andFilters.push({
-        or: [
-          { property: REGION_PROP, select: { equals: region } },
-          { property: REGION_PROP, select: { is_empty: true } }
-        ]
-      });
-    }
+    const andFilters = [{ property: COMPANY_PROP, select: { equals: company } }];
+    if (region) andFilters.push({ property: REGION_PROP, select: { equals: region } });
 
     const body = {
       page_size: 100,
@@ -658,26 +569,16 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     };
 
     const results = await queryAllDatabases(dbids, body);
-
-    // 🔹 화물타입은 항상 multi_select (혹시 select인 DB가 있으면 1번만 읽힘)
     const types = uniq(
       results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
     ).sort((a,b)=> a.localeCompare(b,'ko'));
 
     setCache(res);
-    res.json({
-      ok: true,
-      country,
-      region: region || null,
-      company,
-      types,
-      dbCount: dbids.length
-    });
+    res.json({ ok:true, country, region: region || null, company, types, dbCount: dbids.length });
   } catch (e) {
     res.status(500).json({ ok:false, error:"cargo-types-by-partner failed", details:e.message || String(e) });
   }
 });
-
 
 
 
@@ -690,5 +591,4 @@ registerInboundSosRoutes(app);
    Export (Vercel @vercel/node)
 ────────────────────────────────────────────────────────── */
 module.exports = app;
-
 ~
