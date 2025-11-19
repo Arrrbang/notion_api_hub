@@ -330,7 +330,6 @@ app.get("/api/costs/:country", async (req, res) => {
 
     // 필터 구성
     const andFilters = [];
-    if (region)  andFilters.push({ property: REGION_PROP,  select: { equals: region } });
     if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
     if (roles.length === 1) {
       andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
