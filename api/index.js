@@ -42,11 +42,6 @@ function safeLoadJson(relPathFromRoot) {
   }
 }
 
-function getRegionNames(props) {
-  return getSelectOrMultiNames(props, REGION_PROP);  // 이미 있는 헬퍼 재사용
-}
-
-
 function getAllowed() {
   if (process.env.ALLOWED_TYPES_JSON) {
     try { return JSON.parse(process.env.ALLOWED_TYPES_JSON); } catch {}
@@ -350,7 +345,7 @@ app.get("/api/costs/:country", async (req, res) => {
     const roles     = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
     const cbmQ      = Number(req.query.cbm);
     const cbm       = Number.isFinite(cbmQ) ? cbmQ : null;
-     
+
 
     const type = typeParam || allowed[0];
     if (type !== "CONSOLE" && !allowed.includes(type)) {
@@ -369,16 +364,16 @@ app.get("/api/costs/:country", async (req, res) => {
    if (region) {
      andFilters.push({
        or: [
-         // 단일 선택 지역
          { property: REGION_PROP, select: { equals: region } },
-         // 다중 선택 지역에 해당 region 포함
-         { property: REGION_PROP, multi_select: { contains: region } },
-         // 지역 공란 (공통)
-         { property: REGION_PROP, select: { is_empty: true } },
-         { property: REGION_PROP, multi_select: { is_empty: true } }
+         { property: REGION_PROP, select: { is_empty: true } }
        ]
      });
    }
+
+
+
+
+
 
 
    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
@@ -403,37 +398,30 @@ app.get("/api/costs/:country", async (req, res) => {
       const itemName  = extractTitle(props);
       if (!itemName) continue;
 
-      // 🔹 지역: select/multi_select 모두 지원
-      const regionNames   = getRegionNames(props);  // ["A"], ["A","B"], []
-      const primaryRegion = regionNames[0] || null;
+      const regionName = getSelectName(props, REGION_PROP);
+      const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
 
-      // 🔹 추가내용
-      const extraVal = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
-
-      // 1) 업체 필터: 드롭다운에서 선택한 업체와 동일한 업체가 있는 행만 허용
+      // 1) 업체 필터: 드롭다운 업체와 동일한 업체가 있는 행만 허용
       const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
       if (company && !companyNames.includes(company)) {
         continue;
       }
 
-      // 2) 지역 필터:
-      //    - region이 선택된 경우: regionNames 안에 선택한 region이 있어야 함
-      //    - regionNames가 비어있으면(공통행) 항상 허용
-      if (region) {
-        if (regionNames.length > 0 && !regionNames.includes(region)) {
-          continue;
-        }
-      }
-
-      // 3) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select라고 가정)
+      // 2) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select)
       const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 등
       if (poe && !poeNames.includes(poe)) {
         continue;
       }
 
-      // 4) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
+      // 3) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
       const cargoTypes = getMultiSelectNames(props, DIPLO_PROP);
       if (roles.length > 0 && !roles.some(r => cargoTypes.includes(r))) {
+        continue;
+      }
+
+      // 4) 지역 필터:
+      //    - region이 선택된 경우: 같은 지역이거나 지역 속성이 비어있는 행만 허용
+      if (region && regionName && regionName !== region) {
         continue;
       }
 
@@ -446,12 +434,11 @@ app.get("/api/costs/:country", async (req, res) => {
         numVal = computeConsoleCost(props, cbm);
       }
 
-      // 🔹 결과표용 한 줄
       const rowObj = { 
-        item:   itemName, 
-        region: primaryRegion,                 // 표에 표시되는 지역은 primaryRegion
-        poe:    poeNames.join(", "),
-        extra:  extraVal 
+        item: itemName, 
+        region: regionName, 
+        poe: poeNames.join(", "),
+        extra: extraVal 
       };
 
       // allowed (20FT, 40HC …) 값들 + CBM 관련 값들 채우기 (기존 유지)
@@ -464,24 +451,22 @@ app.get("/api/costs/:country", async (req, res) => {
       rowObj[type]       = numVal;
       rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
-      // 🔹 중복 방지 키: 같은 item + 같은 (표시용) 지역이면 한 번만
-      const dedupKey = `${itemName}__${primaryRegion || "기타"}`;
+      // 중복 방지 키 (기존 그대로)
+      const dedupKey = `${itemName}__${regionName || "기타"}`;
       if (!seen.has(dedupKey)) {
         seen.add(dedupKey);
         rows.push(rowObj);
       }
 
-      // 🔹 values / extras 집계 (기존 UI용 구조 유지)
+
       if (region) {
-        // 특정 지역 모드:
-        //   - primaryRegion이 없거나(region 공통) == 선택 region인 경우만 집계
-        if (!primaryRegion || primaryRegion === region) {
+        if (!regionName || regionName === region) {
+          // 마지막 값이 덮어쓰는 우측 우선 정책
           values[itemName] = numVal;
           extras[itemName] = extraVal ?? null;
         }
       } else {
-        // 전체 지역 모드:
-        const key = primaryRegion || "기타";
+        const key = regionName || "기타";
         if (!valuesByRegion[key]) valuesByRegion[key] = {};
         if (!extrasByRegion[key]) extrasByRegion[key] = {};
         valuesByRegion[key][itemName] = numVal;
@@ -489,13 +474,12 @@ app.get("/api/costs/:country", async (req, res) => {
       }
     }
 
-     
     rows.sort((a, b) => {
       const ao = a[ORDER_PROP] ?? 0;
       const bo = b[ORDER_PROP] ?? 0;
       return ao - bo;
     });
-     
+
     setCache(res);
     res.json({
       ok: true,
@@ -528,16 +512,8 @@ app.get("/api/regions/:country", async (req, res) => {
     for (const dbid of dbids) {
       const meta = await axios.get(`https://api.notion.com/v1/databases/${dbid}`, { headers: notionHeaders() });
       const prop = meta.data.properties?.[REGION_PROP];
-      let part = [];
-      
-      if (prop?.type === "select") {
-        part = (prop.select?.options || []).map(o => o.name).filter(Boolean);
-      } else if (prop?.type === "multi_select") {
-        part = (prop.multi_select?.options || []).map(o => o.name).filter(Boolean);
-      }
-      
+      const part = (prop?.type === "select" ? (prop.select?.options || []).map(o=>o.name).filter(Boolean) : []);
       regions = regions.concat(part);
-
     }
     regions = uniq(regions).sort((a,b)=> a.localeCompare(b,'ko'));
 
@@ -560,17 +536,11 @@ app.get("/api/companies/by-region", async (req, res) => {
     const dbids = getCountryDbIds(country);
     if (dbids.length === 0) return res.json({ ok:true, country, region, companies: [] });
 
-   const body = {
-     page_size: 100,
-     filter: {
-       or: [
-         { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, multi_select: { contains: region } }
-       ]
-     },
-     sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-   };
-
+    const body = {
+      page_size: 100,
+      filter: { property: REGION_PROP, select: { equals: region } },
+      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
+    };
     const results = await queryAllDatabases(dbids, body);
 
    const companies = uniq(
@@ -596,17 +566,11 @@ app.get("/api/poe/by-region", async (req, res) => {
     const dbids = getCountryDbIds(country);
     if (dbids.length === 0) return res.json({ ok:true, country, region, poes: [] });
 
-   const body = {
-     page_size: 100,
-     filter: {
-       or: [
-         { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, multi_select: { contains: region } }
-       ]
-     },
-     sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-   };
-
+    const body = {
+      page_size: 100,
+      filter: { property: REGION_PROP, select: { equals: region } },
+      sorts:  [{ property: ORDER_PROP, direction: "ascending" }]
+    };
     const results = await queryAllDatabases(dbids, body);
 
    const poes = uniq(
@@ -636,15 +600,9 @@ app.get("/api/poe/by-company", async (req, res) => {
     const body = {
       page_size: 100,
       filter: { and: [
-        {
-          or: [
-            { property: REGION_PROP, select: { equals: region } },
-            { property: REGION_PROP, multi_select: { contains: region } }
-          ]
-        },
+        { property: REGION_PROP,  select: { equals: region } },
         { property: COMPANY_PROP, select: { equals: company } }
       ]},
-
       sorts: [{ property: ORDER_PROP, direction: "ascending" }]
     };
     const results = await queryAllDatabases(dbids, body);
@@ -684,17 +642,14 @@ app.get("/api/cargo-types/by-partner", async (req, res) => {
     ];
 
     // 🔹 지역이 선택된 경우: 선택 지역 + 지역 비어있는 행 모두 포함
-   if (region) {
-     andFilters.push({
-       or: [
-         { property: REGION_PROP, select: { equals: region } },
-         { property: REGION_PROP, multi_select: { contains: region } },
-         { property: REGION_PROP, select: { is_empty: true } },
-         { property: REGION_PROP, multi_select: { is_empty: true } }
-       ]
-     });
-   }
-
+    if (region) {
+      andFilters.push({
+        or: [
+          { property: REGION_PROP, select: { equals: region } },
+          { property: REGION_PROP, select: { is_empty: true } }
+        ]
+      });
+    }
 
     const body = {
       page_size: 100,
@@ -736,4 +691,4 @@ registerInboundSosRoutes(app);
 ────────────────────────────────────────────────────────── */
 module.exports = app;
 
-
+~
