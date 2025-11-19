@@ -409,16 +409,36 @@ app.get("/api/costs/:country", async (req, res) => {
       const regionName = getSelectName(props, REGION_PROP);
       const extraVal   = notionRichToHtml(props[EXTRA_TEXT_PROP]?.rich_text || []);
 
-      const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 이런 식
-     if (poe) {
-       // poe가 선택된 경우: 이 행의 poeNames 안에 poe가 없으면 스킵
-       if (!poeNames.includes(poe)) {
-         continue;
-       }
-     }
+      // 1) 업체 필터: 드롭다운 업체와 동일한 업체가 있는 행만 허용
+      const companyNames = getSelectOrMultiNames(props, COMPANY_PROP);
+      if (company && !companyNames.includes(company)) {
+        continue;
+      }
 
+      // 2) POE 필터: 선택된 POE를 포함하는 행만 허용 (POE는 항상 multi_select)
+      const poeNames = getSelectOrMultiNames(props, POE_PROP);   // ["ATLANTA","SAVANNAH"] 등
+      if (poe && !poeNames.includes(poe)) {
+        continue;
+      }
+
+      // 3) 화물타입 필터: 선택된 화물타입(roles)과 일치하는 행만 허용 (항상 multi_select)
+      const cargoTypes = getMultiSelectNames(props, DIPLO_PROP);
+      if (roles.length > 0 && !roles.some(r => cargoTypes.includes(r))) {
+        continue;
+      }
+
+      // 4) 지역 필터:
+      //    - region이 선택된 경우: 같은 지역이거나 지역 속성이 비어있는 행만 허용
+      if (region && regionName && regionName !== region) {
+        continue;
+      }
+
+      // 5) 값 계산 로직 (CONSOLE/20FT/40HC) — 기존 그대로
       let numVal = (type === "CONSOLE") ? null : pickNumber(valueFromColumn(props, type));
-      if (type === "CONSOLE" || ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))) {
+      if (
+        type === "CONSOLE" ||
+        ((type === "20FT" || type === "40HC") && numVal == null && hasCbmTriplet(props))
+      ) {
         numVal = computeConsoleCost(props, cbm);
       }
 
@@ -428,19 +448,24 @@ app.get("/api/costs/:country", async (req, res) => {
         poe: poeNames.join(", "),
         extra: extraVal 
       };
-      for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
+
+      // allowed (20FT, 40HC …) 값들 + CBM 관련 값들 채우기 (기존 유지)
+      for (const key of allowed) {
+        rowObj[key] = pickNumber(valueFromColumn(props, key));
+      }
       rowObj["MIN CBM"]  = getNumberProp(props, MIN_CBM_PROP);
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
       rowObj["MIN COST"] = getNumberProp(props, MIN_COST_PROP);
       rowObj[type]       = numVal;
       rowObj[ORDER_PROP] = getNumberProp(props, ORDER_PROP);
 
-      // 중복 방지 키
+      // 중복 방지 키 (기존 그대로)
       const dedupKey = `${itemName}__${regionName || "기타"}`;
       if (!seen.has(dedupKey)) {
         seen.add(dedupKey);
         rows.push(rowObj);
       }
+
 
       if (region) {
         if (!regionName || regionName === region) {
@@ -456,7 +481,13 @@ app.get("/api/costs/:country", async (req, res) => {
         extrasByRegion[key][itemName] = extraVal ?? null;
       }
     }
-
+     
+    rows.sort((a, b) => {
+      const ao = a[ORDER_PROP] ?? 0;
+      const bo = b[ORDER_PROP] ?? 0;
+      return ao - bo;
+    });
+     
     setCache(res);
     res.json({
       ok: true,
