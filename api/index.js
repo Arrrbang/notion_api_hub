@@ -341,7 +341,14 @@ app.get("/api/costs/:country", async (req, res) => {
      });
    }
    
-   if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
+   if (company) {
+        andFilters.push({
+          or: [
+            { property: COMPANY_PROP, select: { equals: company } },               // 단일 선택일 때
+            { property: COMPANY_PROP, multi_select: { contains: company } }        // 다중 선택일 때
+          ]
+        });
+      }
    if (roles.length === 1) {
      andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
    } else if (roles.length > 1) {
