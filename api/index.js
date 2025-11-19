@@ -328,17 +328,29 @@ app.get("/api/costs/:country", async (req, res) => {
     // 숫자 포맷 병합
     const numberFormats = await fetchMergedNumberFormats(dbids);
 
-    // 필터 구성
-    const andFilters = [];
-    if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
-    if (roles.length === 1) {
-      andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
-    } else if (roles.length > 1) {
-      andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
-    }
-    const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
-    if (andFilters.length === 1) body.filter = andFilters[0];
-    else if (andFilters.length > 1) body.filter = { and: andFilters };
+   // 필터 구성
+   const andFilters = [];
+   
+   // 🔧 수정: 선택한 지역 OR 지역 비어있는 행 둘 다 포함
+   if (region) {
+     andFilters.push({
+       or: [
+         { property: REGION_PROP, select: { equals: region } },
+         { property: REGION_PROP, select: { is_empty: true } }
+       ]
+     });
+   }
+   
+   if (company) andFilters.push({ property: COMPANY_PROP, select: { equals: company } });
+   if (roles.length === 1) {
+     andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
+   } else if (roles.length > 1) {
+     andFilters.push({ or: roles.map(r => ({ property: DIPLO_PROP, multi_select: { contains: r } })) });
+   }
+   const body = { page_size: 100, sorts: [{ property: ORDER_PROP, direction: "ascending" }] };
+   if (andFilters.length === 1) body.filter = andFilters[0];
+   else if (andFilters.length > 1) body.filter = { and: andFilters };
+
 
     // 여러 DB에서 결과 수집
     const results = await queryAllDatabases(dbids, body);
