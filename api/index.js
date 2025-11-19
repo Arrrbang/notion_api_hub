@@ -329,9 +329,11 @@ app.get("/api/costs/:country", async (req, res) => {
     const region    = (req.query.region || req.query.pick || req.query.select || "").trim();
     const company   = (req.query.company || "").trim();
     const rolesStr  = (req.query.roles || req.query.role || req.query.diplomat || "").trim();
+    const poe       = (req.query.poe || "").trim();
     const roles     = rolesStr ? rolesStr.split(",").map(s=>s.trim()).filter(Boolean) : [];
     const cbmQ      = Number(req.query.cbm);
     const cbm       = Number.isFinite(cbmQ) ? cbmQ : null;
+     
 
     const type = typeParam || allowed[0];
     if (type !== "CONSOLE" && !allowed.includes(type)) {
@@ -347,7 +349,6 @@ app.get("/api/costs/:country", async (req, res) => {
    // 필터 구성
    const andFilters = [];
 
-   // 🔧 수정: 선택한 지역 OR 지역 비어있는 행 둘 다 포함
    if (region) {
      andFilters.push({
        or: [
@@ -365,6 +366,16 @@ app.get("/api/costs/:country", async (req, res) => {
           ]
         });
       }
+
+   if (poe) {
+     andFilters.push({
+       or: [
+         { property: POE_PROP, select: { equals: poe } },              // 혹시 아직 select인 DB 대응
+         { property: POE_PROP, multi_select: { contains: poe } }       // 멀티선택 대응
+       ]
+     });
+   }
+
    if (roles.length === 1) {
      andFilters.push({ property: DIPLO_PROP, multi_select: { contains: roles[0] } });
    } else if (roles.length > 1) {
@@ -400,7 +411,13 @@ app.get("/api/costs/:country", async (req, res) => {
         numVal = computeConsoleCost(props, cbm);
       }
 
-      const rowObj = { item: itemName, region: regionName, extra: extraVal };
+      const poeNames = getSelectOrMultiNames(props, POE_PROP);
+      const rowObj = { 
+        item: itemName, 
+        region: regionName, 
+        poe: poeNames.join(", "),
+        extra: extraVal 
+      };
       for (const key of allowed) rowObj[key] = pickNumber(valueFromColumn(props, key));
       rowObj["MIN CBM"]  = getNumberProp(props, MIN_CBM_PROP);
       rowObj["PER CBM"]  = getNumberProp(props, PER_CBM_PROP);
