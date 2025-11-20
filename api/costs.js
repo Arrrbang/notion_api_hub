@@ -23,7 +23,7 @@ const FORMULA_PROP    = process.env.FORMULA_PROP     || '계산식';     // 수�
 // CONSOLE 계산에 사용하는 속성
 const MIN_COST_PROP   = process.env.MIN_COST_PROP    || 'MIN COST';
 const MIN_CBM_PROP    = process.env.MIN_CBM_PROP     || 'MIN CBM';
-const PER_COST_PROP   = process.env.PER_COST_PROP    || 'PER COST';
+const PER_COST_PROP   = process.env.PER_COST_PROP    || 'PER CBM';
 
 // 순서 정렬용
 const ORDER_PROP      = process.env.ORDER_PROP       || '순서';
