@@ -1,20 +1,19 @@
 // api/index.js
-// 메인 엔트리: Express 앱 생성 + SOS 라우트 등록 (+ Notion 연결 헬스체크)
+// 메인 엔트리: Express 앱 생성 + OUTBOUND SOS 라우트 등록
 
 const express = require("express");
 const cors    = require("cors");
 const axios   = require("axios");
 
-const registerDestinationRoutes = require("./destination");
+// 지금은 OUTBOUND SOS만 사용
 const registerOutboundSosRoutes = require("./outboundsos");
-const registerInboundSosRoutes  = require("./inboundsos");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 /* ─────────────────────────────────────────────────────────
-   Notion 기본 설정 (SOS 모듈과 같은 ENV를 사용)
+   Notion 기본 설정 (상태 확인용 헬스체크에만 사용)
 ────────────────────────────────────────────────────────── */
 
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
@@ -32,13 +31,13 @@ function notionHeaders() {
 
 /* ─────────────────────────────────────────────────────────
    Health / Notion 연결 체크
-   - 프론트에서 백엔드/노션 연결 상태 확인용
 ────────────────────────────────────────────────────────── */
 
 app.get(["/", "/api/health"], async (req, res) => {
   const tokenPresent = Boolean(NOTION_TOKEN);
 
   if (!tokenPresent) {
+    // 토큰 없으면 서버는 살아있지만, Notion 연동 안 되는 상태
     return res.status(500).json({
       ok: false,
       notion: { tokenPresent: false },
@@ -47,6 +46,7 @@ app.get(["/", "/api/health"], async (req, res) => {
   }
 
   try {
+    // 가벼운 Notion API 호출로 실제 연결 여부 확인
     await axios.get("https://api.notion.com/v1/users/me", {
       headers: notionHeaders()
     });
@@ -67,19 +67,11 @@ app.get(["/", "/api/health"], async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────
-   라우트 등록
-   - /api/outboundsos
-   - /api/inboundsos
-   - /api/destination
+   OUTBOUND SOS 라우트 등록
+   - GET /api/sos-rate/outbound
 ────────────────────────────────────────────────────────── */
 
-// 도착지(DESTINATION) 관련 라우트 등록
-registerDestinationRoutes(app);
-
-// SOS (기존) 라우트 등록
 registerOutboundSosRoutes(app);
-registerInboundSosRoutes(app);
-
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
