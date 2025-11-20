@@ -5,10 +5,7 @@ const express = require("express");
 const cors    = require("cors");
 const axios   = require("axios");
 
-// 도착지 모듈
 const registerDestinationRoutes = require("./destination");
-
-// SOS 모듈
 const registerOutboundSosRoutes = require("./outboundsos");
 const registerInboundSosRoutes  = require("./inboundsos");
 
@@ -38,11 +35,9 @@ function notionHeaders() {
    - 프론트에서 백엔드/노션 연결 상태 확인용
 ────────────────────────────────────────────────────────── */
 
-// 기본 헬스체크 + Notion 토큰/연결 확인
 app.get(["/", "/api/health"], async (req, res) => {
   const tokenPresent = Boolean(NOTION_TOKEN);
 
-  // 토큰이 없으면 바로 에러 리턴 (서버는 살아 있지만 Notion 연결 불가)
   if (!tokenPresent) {
     return res.status(500).json({
       ok: false,
@@ -52,8 +47,6 @@ app.get(["/", "/api/health"], async (req, res) => {
   }
 
   try {
-    // 가벼운 Notion API 호출로 실제 연결 여부 확인
-    // 너무 무거운 쿼리 말고, /v1/users/me 정도만 사용
     await axios.get("https://api.notion.com/v1/users/me", {
       headers: notionHeaders()
     });
