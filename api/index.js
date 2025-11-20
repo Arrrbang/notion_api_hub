@@ -8,6 +8,7 @@ const axios   = require("axios");
 const registerDestinationRoutes = require("./destination");
 const registerOutboundSosRoutes = require("./outboundsos");
 const registerInboundSosRoutes  = require("./inboundsos");
+const registerCostsRoutes       = require('./costs');
 
 const app = express();
 app.use(cors());
@@ -74,6 +75,7 @@ app.get(["/", "/api/health"], async (req, res) => {
 registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
 registerDestinationRoutes(app);
+registerCostsRoutes(app);  
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
