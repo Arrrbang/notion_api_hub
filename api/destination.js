@@ -217,56 +217,89 @@ function registerDestinationRoutes(app) {
   });
 
 
-  // ────────────────────────────────
   // 1) 지역 → 업체
-  // ────────────────────────────────
+  // - REGION_PROP: multi_select
+  // - 선택된 region 값이 multi_select에 포함된 행들만 사용
+  // - 그 행들의 업체(COMPANY_PROP: select) 이름을 모아서 중복 제거 후 정렬
   app.get("/api/companies/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
+  
       if (!country || !region) {
-        return res.status(400).json({ ok:false, error:"country and region are required" });
+        return res.status(400).json({
+          ok: false,
+          error: "country and region are required",
+        });
       }
-
+  
       const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok:true, country, region, companies: [], options: [] });
+      if (!dbids.length) {
+        return res.json({
+          ok: true,
+          country,
+          region,
+          companies: [],
+          options: [],
+        });
       }
-
+  
+      // 🔹 모든 DB의 모든 페이지를 다 읽어온다 (queryAllDatabases는 이미 페이징 지원 버전이어야 함)
       const body = {
         page_size: 100,
-        // REGION 이 multi_select 이므로 multi_select.contains 사용
-        filter: {
-          property: REGION_PROP,
-          multi_select: { contains: region }
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+        // 여기서는 REGION 필터를 Notion에 안 걸고, 서버에서 직접 필터링
+        // (multi_select 타입/이름 문제를 피하고, 로직을 우리가 완전히 컨트롤하기 위함)
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }],
       };
-
-      const results = await queryAllDatabases(dbids, body);
-
-      const companies = uniq(
-        results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
-      ).sort((a, b) => a.localeCompare(b, "ko"));
-
+  
+      const pages = await queryAllDatabases(dbids, body);
+  
+      const companySet = new Set();
+  
+      for (const page of pages) {
+        const props = page.properties || {};
+  
+        // REGION_PROP: multi_select
+        const regionCol = props[REGION_PROP];
+        if (!regionCol || regionCol.type !== "multi_select") {
+          // 지역이 비어있거나 타입이 다르면 이번 행은 스킵
+          continue;
+        }
+  
+        const items = regionCol.multi_select || [];
+        const hasRegion = items.some(opt => opt && opt.name === region);
+        if (!hasRegion) continue;
+  
+        // 업체(단일 선택) 값 추출
+        const companyName = getSelectName(props, COMPANY_PROP);
+        if (companyName) {
+          companySet.add(companyName);
+        }
+      }
+  
+      const companies = Array.from(companySet).sort((a, b) =>
+        a.localeCompare(b, "ko", { sensitivity: "base" })
+      );
+  
       setCache(res);
-      // unified-partners.js 에서 j.companies 또는 j.options 둘 다 볼 수 있게 options도 같이 반환
-      res.json({
+      return res.json({
         ok: true,
         country,
         region,
         companies,
-        options: companies,
-        dbCount: dbids.length
+        options: companies,   // 프론트에서 j.options로도 쓸 수 있게
+        dbCount: dbids.length,
       });
     } catch (e) {
-      res.status(500).json({
+      console.error("GET /api/companies/by-region error:", e.response?.data || e);
+      return res.status(500).json({
         ok: false,
         error: "companies-by-region failed",
-        details: e.message || String(e)
+        details: e.response?.data || e.message || String(e),
       });
     }
   });
+
 
   // ────────────────────────────────
   // 2) 지역 → POE
