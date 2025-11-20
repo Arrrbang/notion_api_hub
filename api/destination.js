@@ -379,50 +379,57 @@ function registerDestinationRoutes(app) {
   });
 
   // ────────────────────────────────
-  // 4) 업체 (+선택지역) → 화물타입
+  // 4) 업체 (+선택지역+POE) → 화물타입
   // ────────────────────────────────
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim(); // 선택
+      const region  = (req.query.region  || "").trim();
       const company = (req.query.company || "").trim();
-      if (!country || !company) {
-        return res.status(400).json({ ok:false, error:"country and company are required" });
+      const poe     = (req.query.poe     || "").trim();   // 🔥 추가
+  
+      if (!country || !company || !poe) {
+        return res.status(400).json({ 
+          ok:false, 
+          error:"country, company, poe are required" 
+        });
       }
-
+  
       const dbids = getCountryDbIds(country);
       if (dbids.length === 0) {
         return res.json({ ok:true, country, types: [], options: [] });
       }
-
+  
       const andFilters = [
-        { property: COMPANY_PROP, select: { equals: company } }
+        { property: COMPANY_PROP, select: { equals: company } },
+        { property: POE_PROP,     multi_select: { contains: poe } }   // 🔥 추가
       ];
+  
       if (region) {
         andFilters.push({
           property: REGION_PROP,
           multi_select: { contains: region }
         });
       }
-
+  
       const body = {
         page_size: 100,
-        filter: (andFilters.length === 1 ? andFilters[0] : { and: andFilters }),
+        filter: { and: andFilters },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
       };
-
+  
       const results = await queryAllDatabases(dbids, body);
-
+  
       const types = uniq(
         results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
       ).sort((a, b) => a.localeCompare(b, "ko"));
-
-      setCache(res);
+  
       res.json({
         ok: true,
         country,
-        region: region || null,
+        region,
         company,
+        poe,
         types,
         options: types,
         dbCount: dbids.length
@@ -435,6 +442,7 @@ function registerDestinationRoutes(app) {
       });
     }
   });
+
 }
 
 module.exports = registerDestinationRoutes;
