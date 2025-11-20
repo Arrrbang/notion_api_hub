@@ -83,19 +83,38 @@ function getMultiSelectNames(props, key) {
   return (col.multi_select || []).map(o => o.name).filter(Boolean);
 }
 
-// 여러 DB를 같은 body로 query 해서 results 합치기
-async function queryAllDatabases(dbids, body) {
-  const calls = dbids.map(dbid =>
-    axios.post(
-      `https://api.notion.com/v1/databases/${dbid}/query`,
-      body,
+//“전체 페이지를 끝까지 반복해서 읽는 query” 헬퍼 추가
+async function queryAllPages(dbId, body) {
+  let all = [];
+  let hasMore = true;
+  let cursor = undefined;
+
+  while (hasMore) {
+    const payload = { ...body };
+    if (cursor) payload.start_cursor = cursor;
+
+    const resp = await axios.post(
+      `https://api.notion.com/v1/databases/${dbId}/query`,
+      payload,
       { headers: notionHeaders() }
-    )
-    .then(r => r.data?.results || [])
-    .catch(() => [])
-  );
-  const chunks = await Promise.all(calls);
-  return chunks.flat();
+    );
+
+    const data = resp.data;
+    all.push(...(data.results || []));
+    hasMore = data.has_more;
+    cursor = data.next_cursor;
+  }
+  return all;
+}
+
+// 여러 DB를 같은 body로 query 해서 results 합치기
+async function queryAllDatabases(dbIds, body) {
+  const all = [];
+  for (const id of dbIds) {
+    const pages = await queryAllPages(id, body);
+    all.push(...pages);
+  }
+  return all;
 }
 
 // 캐시 헤더 (옵션)
