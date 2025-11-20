@@ -507,6 +507,18 @@ function registerCostsRoutes(app) {
           [type]: amount ?? null,
           extra,
         });
+        rows.sort((a, b) => {
+          const oa = Number(a.order) || 0;
+          const ob = Number(b.order) || 0;
+          return oa - ob;
+        });
+        
+        // 최종 응답
+        return res.status(200).json({
+          ok: true,
+          ...
+          rows,
+        });
       }
 
       res.json({
