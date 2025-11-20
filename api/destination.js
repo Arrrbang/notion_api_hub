@@ -300,62 +300,13 @@ function registerDestinationRoutes(app) {
     }
   });
 
-
-  // ────────────────────────────────
-  // 2) 지역 → POE
-  // ────────────────────────────────
-  app.get("/api/poe/by-region", async (req, res) => {
-    try {
-      const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim();
-  
-      if (!country || !region) {
-        return res.status(400).json({ ok:false, error:"country and region are required" });
-      }
-  
-      const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok:true, country, region, poes: [], options: [] });
-      }
-  
-      const body = {
-        page_size: 100,
-        filter: {
-          property: REGION_PROP,
-          multi_select: { contains: region }
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-      };
-  
-      const results = await queryAllDatabases(dbids, body);
-  
-      // 🔥 여기 multi_select 적용
-      const poes = uniq(
-        results.flatMap(p => getMultiSelectNames(p.properties, POE_PROP))
-      ).sort((a, b) => a.localeCompare(b, "ko"));
-  
-      setCache(res);
-      res.json({
-        ok: true,
-        country,
-        region,
-        poes,
-        options: poes,
-        dbCount: dbids.length
-      });
-    } catch (e) {
-      res.status(500).json({
-        ok: false,
-        error: "poe-by-region failed",
-        details: e.message || String(e)
-      });
-    }
-  });
-
-
   // ────────────────────────────────
   // 3) 업체 + 지역 → POE
   // ────────────────────────────────
+  // 3) 업체 + 지역 → POE
+  // - REGION_PROP: multi_select
+  // - COMPANY_PROP: select
+  // - (region + company) 가 모두 일치하는 행들의 POE(multi_select) 값만 사용
   app.get("/api/poe/by-company", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -376,24 +327,38 @@ function registerDestinationRoutes(app) {
   
       const body = {
         page_size: 100,
-        filter: {
-          and: [
-            { property: REGION_PROP,  multi_select: { contains: region } },
-            { property: COMPANY_PROP, select:       { equals: company } }
-          ]
-        },
+        // 여기서도 Notion 필터는 안 쓰고, 전체를 읽은 다음 JS에서 필터링
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
       };
   
-      const results = await queryAllDatabases(dbids, body);
+      const pages = await queryAllDatabases(dbids, body);
+      const poeSet = new Set();
   
-      // 🔥 multi_select 기반으로 값 모음
-      const poes = uniq(
-        results.flatMap(p => getMultiSelectNames(p.properties, POE_PROP))
-      ).sort((a, b) => a.localeCompare(b, "ko"));
+      for (const page of pages) {
+        const props = page.properties || {};
+  
+        // REGION 체크 (multi_select 안에 선택 region 이 포함되어야 함)
+        const regionCol = props[REGION_PROP];
+        if (!regionCol || regionCol.type !== "multi_select") continue;
+        const regions = regionCol.multi_select || [];
+        const hasRegion = regions.some(opt => opt && opt.name === region);
+        if (!hasRegion) continue;
+  
+        // COMPANY 체크 (select 값이 선택 company 와 같아야 함)
+        const companyName = getSelectName(props, COMPANY_PROP);
+        if (!companyName || companyName !== company) continue;
+  
+        // 조건 통과한 행의 POE multi_select 값 수집
+        const poeNames = getMultiSelectNames(props, POE_PROP);
+        poeNames.forEach(name => poeSet.add(name));
+      }
+  
+      const poes = Array.from(poeSet).sort((a, b) =>
+        a.localeCompare(b, "ko", { sensitivity: "base" })
+      );
   
       setCache(res);
-      res.json({
+      return res.json({
         ok: true,
         country,
         region,
@@ -403,13 +368,15 @@ function registerDestinationRoutes(app) {
         dbCount: dbids.length
       });
     } catch (e) {
-      res.status(500).json({
+      console.error("GET /api/poe/by-company error:", e.response?.data || e);
+      return res.status(500).json({
         ok: false,
         error: "poe-by-company failed",
-        details: e.message || String(e)
+        details: e.response?.data || e.message || String(e)
       });
     }
   });
+
 
   // ────────────────────────────────
   // 4) 업체 (+선택지역+POE) → 화물타입
