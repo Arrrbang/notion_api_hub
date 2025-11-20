@@ -1,5 +1,5 @@
 // api/destination.js
-// 도착지 비용 계산용 공통 라우트 (국가/지역 드롭다운)
+// 도착지 비용 계산용 공통 라우트 (국가/지역/파트너/POE/화물타입 드롭다운)
 
 // 외부 모듈
 const fs    = require("fs");
@@ -7,8 +7,13 @@ const path  = require("path");
 const axios = require("axios");
 
 // Notion 토큰 + 속성명
-const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
-const REGION_PROP  = process.env.REGION_PROP || "지역";   // 노션에서 "지역" multi_select 속성명
+const NOTION_TOKEN  = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+const REGION_PROP   = process.env.REGION_PROP   || "지역";      // multi_select
+const COMPANY_PROP  = process.env.COMPANY_PROP  || "업체";      // select
+const POE_PROP      = process.env.POE_PROP      || "POE";       // multi_select
+const DIPLO_PROP    = process.env.DIPLO_PROP    || "화물타입";  // multi_select
+const ORDER_PROP    = process.env.ORDER_PROP    || "순서";      // number / 정렬용
+const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 0);
 
 // ────────────────────────────────
 // Notion 공통 헤더
@@ -40,7 +45,7 @@ function loadDbMap() {
 
 /**
  * 국가 이름으로 DB ID 배열 가져오기
- * - "임시": ["..."], "미국": ["...","..."] 형식 지원 :contentReference[oaicite:3]{index=3}
+ * - "임시": ["..."], "미국": ["...","..."] 형식 지원
  */
 function getCountryDbIds(country) {
   const dbmap = loadDbMap();
@@ -61,6 +66,46 @@ function sortKoAZ(arr) {
     );
 }
 
+// 중복 제거
+const uniq = (arr) => [...new Set((arr || []).filter(Boolean))];
+
+// select 이름 추출
+function getSelectName(props, key) {
+  const col = props?.[key];
+  if (!col || col.type !== "select") return null;
+  return col.select?.name || null;
+}
+
+// multi_select 이름 배열 추출
+function getMultiSelectNames(props, key) {
+  const col = props?.[key];
+  if (!col || col.type !== "multi_select") return [];
+  return (col.multi_select || []).map(o => o.name).filter(Boolean);
+}
+
+// 여러 DB를 같은 body로 query 해서 results 합치기
+async function queryAllDatabases(dbids, body) {
+  const calls = dbids.map(dbid =>
+    axios.post(
+      `https://api.notion.com/v1/databases/${dbid}/query`,
+      body,
+      { headers: notionHeaders() }
+    )
+    .then(r => r.data?.results || [])
+    .catch(() => [])
+  );
+  const chunks = await Promise.all(calls);
+  return chunks.flat();
+}
+
+// 캐시 헤더 (옵션)
+function setCache(res) {
+  res.setHeader(
+    "Cache-Control",
+    `s-maxage=${CACHE_TTL_SECONDS}, stale-while-revalidate=86400`
+  );
+}
+
 // ────────────────────────────────
 // 메인: 라우트 등록 함수
 // ────────────────────────────────
@@ -70,7 +115,7 @@ function registerDestinationRoutes(app) {
    * GET /api/debug/config
    *
    * - 국가 드롭다운용
-   * - 프론트에서는 j.countries 또는 j.dbStructure를 사용함 :contentReference[oaicite:4]{index=4}
+   * - 프론트에서는 j.countries 또는 j.dbStructure 사용
    */
   app.get("/api/debug/config", (req, res) => {
     try {
@@ -96,7 +141,6 @@ function registerDestinationRoutes(app) {
    *
    * - 1번 드롭다운에서 선택된 국가의 모든 DB에서
    *   "지역" multi_select 속성 값들을 모아서 중복 제거 후 반환.
-   * - 프론트: /api/regions/${country} 응답의 j.regions 사용 :contentReference[oaicite:5]{index=5}
    */
   app.get("/api/regions/:country", async (req, res) => {
     const country = (req.params.country || "").trim();
@@ -161,7 +205,9 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  // 지역 → 업체 (중복 제거, 실제 데이터 기준 / REGION: multi_select)
+  // ────────────────────────────────
+  // 1) 지역 → 업체
+  // ────────────────────────────────
   app.get("/api/companies/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -169,28 +215,28 @@ function registerDestinationRoutes(app) {
       if (!country || !region) {
         return res.status(400).json({ ok:false, error:"country and region are required" });
       }
-  
+
       const dbids = getCountryDbIds(country);
       if (dbids.length === 0) {
         return res.json({ ok:true, country, region, companies: [], options: [] });
       }
-  
+
       const body = {
         page_size: 100,
-        // 🔹 REGION 이 multi_select 이므로 multi_select.contains 사용
+        // REGION 이 multi_select 이므로 multi_select.contains 사용
         filter: {
           property: REGION_PROP,
           multi_select: { contains: region }
         },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
       };
-  
+
       const results = await queryAllDatabases(dbids, body);
-  
+
       const companies = uniq(
         results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
       ).sort((a, b) => a.localeCompare(b, "ko"));
-  
+
       setCache(res);
       // unified-partners.js 에서 j.companies 또는 j.options 둘 다 볼 수 있게 options도 같이 반환
       res.json({
@@ -209,12 +255,15 @@ function registerDestinationRoutes(app) {
       });
     }
   });
-  
-  // 지역 → POE (중복 제거, REGION: multi_select)
+
+  // ────────────────────────────────
+  // 2) 지역 → POE
+  // ────────────────────────────────
   app.get("/api/poe/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
+  
       if (!country || !region) {
         return res.status(400).json({ ok:false, error:"country and region are required" });
       }
@@ -235,8 +284,9 @@ function registerDestinationRoutes(app) {
   
       const results = await queryAllDatabases(dbids, body);
   
+      // 🔥 여기 multi_select 적용
       const poes = uniq(
-        results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+        results.flatMap(p => getMultiSelectNames(p.properties, POE_PROP))
       ).sort((a, b) => a.localeCompare(b, "ko"));
   
       setCache(res);
@@ -256,13 +306,17 @@ function registerDestinationRoutes(app) {
       });
     }
   });
-  
-  // 업체+지역 → POE (중복 제거, REGION: multi_select)
+
+
+  // ────────────────────────────────
+  // 3) 업체 + 지역 → POE
+  // ────────────────────────────────
   app.get("/api/poe/by-company", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
       const company = (req.query.company || "").trim();
+  
       if (!country || !region || !company) {
         return res.status(400).json({
           ok:false,
@@ -279,14 +333,8 @@ function registerDestinationRoutes(app) {
         page_size: 100,
         filter: {
           and: [
-            {
-              property: REGION_PROP,
-              multi_select: { contains: region }
-            },
-            {
-              property: COMPANY_PROP,
-              select: { equals: company }
-            }
+            { property: REGION_PROP,  multi_select: { contains: region } },
+            { property: COMPANY_PROP, select:       { equals: company } }
           ]
         },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
@@ -294,8 +342,9 @@ function registerDestinationRoutes(app) {
   
       const results = await queryAllDatabases(dbids, body);
   
+      // 🔥 multi_select 기반으로 값 모음
       const poes = uniq(
-        results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+        results.flatMap(p => getMultiSelectNames(p.properties, POE_PROP))
       ).sort((a, b) => a.localeCompare(b, "ko"));
   
       setCache(res);
@@ -316,8 +365,10 @@ function registerDestinationRoutes(app) {
       });
     }
   });
-  
-  // 화물타입 목록: 업체(필수) [+ 선택 지역] → multi_select "화물타입" 기준 distinct
+
+  // ────────────────────────────────
+  // 4) 업체 (+선택지역) → 화물타입
+  // ────────────────────────────────
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -326,12 +377,12 @@ function registerDestinationRoutes(app) {
       if (!country || !company) {
         return res.status(400).json({ ok:false, error:"country and company are required" });
       }
-  
+
       const dbids = getCountryDbIds(country);
       if (dbids.length === 0) {
         return res.json({ ok:true, country, types: [], options: [] });
       }
-  
+
       const andFilters = [
         { property: COMPANY_PROP, select: { equals: company } }
       ];
@@ -341,19 +392,19 @@ function registerDestinationRoutes(app) {
           multi_select: { contains: region }
         });
       }
-  
+
       const body = {
         page_size: 100,
         filter: (andFilters.length === 1 ? andFilters[0] : { and: andFilters }),
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
       };
-  
+
       const results = await queryAllDatabases(dbids, body);
-  
+
       const types = uniq(
         results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
       ).sort((a, b) => a.localeCompare(b, "ko"));
-  
+
       setCache(res);
       res.json({
         ok: true,
@@ -372,7 +423,6 @@ function registerDestinationRoutes(app) {
       });
     }
   });
-
 }
 
 module.exports = registerDestinationRoutes;
