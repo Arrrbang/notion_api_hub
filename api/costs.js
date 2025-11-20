@@ -18,6 +18,7 @@ const CARGO_PROP      = process.env.CARGO_PROP       || '화물타입';   // mul
 const BASIC_PROP      = process.env.BASIC_PROP       || '기본/추가';  // select ("기본","추가" 등)
 const ITEM_PROP       = process.env.ITEM_PROP        || '항목';       // title / rich_text
 const EXTRA_PROP      = process.env.EXTRA_PROP       || '참고사항';   // rich_text(없으면 "비고"로 바꿔도 됨)
+const FORMULA_PROP    = process.env.FORMULA_PROP     || '계산식';     // 수식 텍스트(50000 + (CBM-5)*10000)
 
 // CONSOLE 계산에 사용하는 속성
 const MIN_COST_PROP   = process.env.MIN_COST_PROP    || 'MIN COST';
@@ -196,6 +197,144 @@ function calcConsoleAmount(props, cbm) {
   return minCost + (cbm - minCbm) * perCost;
 }
 
+// CONSOLE 계산: MIN COST + ( (CBM - MIN CBM) * PER COST )
+function calcConsoleAmount(props, cbm) {
+  const minCost = getNumberFromProp(props[MIN_COST_PROP]);
+  const minCbm  = getNumberFromProp(props[MIN_CBM_PROP]);
+  const perCost = getNumberFromProp(props[PER_COST_PROP]);
+
+  if (!Number.isFinite(cbm))           return undefined;
+  if (!Number.isFinite(minCost))       return undefined;
+  if (!Number.isFinite(minCbm))        return undefined;
+  if (!Number.isFinite(perCost))       return undefined;
+
+  if (cbm <= minCbm) return minCost;
+  return minCost + (cbm - minCbm) * perCost;
+}
+
+// 🔽 새로 추가: Notion "계산식" 속성에서 수식 텍스트 읽기
+function getFormulaText(props, key) {
+  const col = props?.[key];
+  if (!col) return '';
+
+  if (col.type === 'rich_text') {
+    return getTextFromRich(col.rich_text);
+  }
+  if (col.type === 'title') {
+    return getTextFromRich(col.title);
+  }
+  // 다른 타입이면 일단 문자열로 시도
+  return String(col?.plain_text || '');
+}
+
+// 🔽 새로 추가: "50000 + (CBM-5)*10000" 같은 식을 평가
+function evalFormula(code, context) {
+  if (!code) return undefined;
+  let expr = String(code).trim();
+  if (!expr) return undefined;
+
+  // 허용 문자: 숫자, 공백, + - * / . ( ) 그리고 CBM/cbm
+  const safe = /^[0-9+\-*/().\sCBMcbm]+$/;
+  if (!safe.test(expr)) {
+    return undefined; // 허용 안 하는 문자가 있으면 그냥 무시
+  }
+
+  // CBM 변수를 실제 숫자로 치환
+  const cbmVal = Number(context?.cbm ?? 0);
+  expr = expr.replace(/CBM/gi, String(cbmVal));
+
+  try {
+    // 최소한으로 감싼 eval
+    // (이 서버는 내부에서만 쓰고, 위에서 문자 필터링 했기 때문에 리스크는 낮음)
+    const fn = new Function('"use strict"; return (' + expr + ');');
+    const val = fn();
+    return Number.isFinite(val) ? val : undefined;
+  } catch (e) {
+    return undefined;
+  }
+}
+
+// ------------------------------------------------------------
+// CBM 범위 매칭 공식 처리 (1≤CBM≤10 = 200)
+// ------------------------------------------------------------
+function evalRangeFormula(code, cbm) {
+  if (!code) return undefined;
+
+  const lines = code.split(/\n+/).map(s => s.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    //
+    // 패턴 1: "1 ≤ CBM ≤ 10 = 200"
+    //
+    let m = line.match(/^(\d+)\s*[<≤]\s*CBM\s*[<≤]\s*(\d+)\s*=\s*(\d+)/i);
+    if (m) {
+      const low = Number(m[1]);
+      const high = Number(m[2]);
+      const val = Number(m[3]);
+      if (cbm >= low && cbm <= high) return val;
+      continue;
+    }
+
+    //
+    // 패턴 2: "CBM > 20 = 400"
+    //
+    m = line.match(/^CBM\s*([<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
+    if (m) {
+      const op  = m[1];
+      const num = Number(m[2]);
+      const val = Number(m[3]);
+
+      if (
+        (op === '<'  && cbm <  num) ||
+        (op === '>'  && cbm >  num) ||
+        (op === '<=' && cbm <= num) ||
+        (op === '>=' && cbm >= num)
+      ) return val;
+
+      continue;
+    }
+
+    //
+    // 패턴 3: "0 < CBM < 11 = 200"
+    //
+    m = line.match(/^(\d+)\s*<\s*CBM\s*<\s*(\d+)\s*=\s*(\d+)/i);
+    if (m) {
+      const low = Number(m[1]);
+      const high = Number(m[2]);
+      const val  = Number(m[3]);
+      if (cbm > low && cbm < high) return val;
+      continue;
+    }
+
+    //
+    // 패턴 4: "IF CBM < 11 THEN 200"
+    //
+    m = line.match(/^IF\s+CBM\s*([<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
+    if (m) {
+      const op  = m[1];
+      const num = Number(m[2]);
+      const val = Number(m[3]);
+
+      if (
+        (op === '<'  && cbm <  num) ||
+        (op === '>'  && cbm >  num) ||
+        (op === '<=' && cbm <= num) ||
+        (op === '>=' && cbm >= num)
+      ) return val;
+
+      continue;
+    }
+
+    //
+    // 패턴 5: ELSE 300
+    //
+    m = line.match(/^ELSE\s+(\d+)/i);
+    if (m) return Number(m[1]);
+  }
+
+  return undefined;
+}
+
 // ────────────────────────────────
 // 라우트 등록
 // ────────────────────────────────
@@ -296,20 +435,52 @@ function registerCostsRoutes(app) {
 
         // 3) 금액 계산
         let amount;
-
+        
         if (type === 'CONSOLE') {
-          // CONSOLE: MIN COST + ((CBM - MIN CBM) * PER COST)
+          // 1순위: CONSOLE 공식
           amount = calcConsoleAmount(props, cbm);
+        
+          // 2순위: 범위 공식
+          if (!Number.isFinite(amount)) {
+            const code = getFormulaText(props, FORMULA_PROP);
+            const rangeVal = evalRangeFormula(code, cbm);
+            if (Number.isFinite(rangeVal)) amount = rangeVal;
+          }
+        
+          // 3순위: 일반 수학식
+          if (!Number.isFinite(amount)) {
+            const code = getFormulaText(props, FORMULA_PROP);
+            const exprVal = evalFormula(code, { cbm });
+            if (Number.isFinite(exprVal)) amount = exprVal;
+          }
+        
         } else {
-          // 20FT / 40HC: 해당 컬럼 값 우선
+          // --- 20FT / 40HC ---
           const direct = getNumberFromProp(props[type]);
+        
           if (Number.isFinite(direct)) {
             amount = direct;
           } else {
-            // 20FT/40HC 값이 없으면 CONSOLE 로직으로 계산
+            // 콘솔 공식
             amount = calcConsoleAmount(props, cbm);
+        
+            // 범위식
+            if (!Number.isFinite(amount)) {
+              const code = getFormulaText(props, FORMULA_PROP);
+              const rangeVal = evalRangeFormula(code, cbm);
+              if (Number.isFinite(rangeVal)) amount = rangeVal;
+            }
+        
+            // 일반식
+            if (!Number.isFinite(amount)) {
+              const code = getFormulaText(props, FORMULA_PROP);
+              const exprVal = evalFormula(code, { cbm });
+              if (Number.isFinite(exprVal)) amount = exprVal;
+            }
           }
         }
+
+
 
         // 4) 항목/비고 텍스트
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
