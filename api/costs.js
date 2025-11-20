@@ -433,52 +433,62 @@ function registerCostsRoutes(app) {
         if (!isPoeMatch(poeNames, poe))            continue;
         if (!isCargoMatch(cargoNames, roles))      continue;
 
-        // 3) 금액 계산
+        // 3) 금액 계산 (타입과 상관 없이 공통 규칙)
         let amount;
-        
-        if (type === 'CONSOLE') {
-          // 1순위: CONSOLE 공식
-          amount = calcConsoleAmount(props, cbm);
-        
-          // 2순위: 범위 공식
-          if (!Number.isFinite(amount)) {
-            const code = getFormulaText(props, FORMULA_PROP);
-            const rangeVal = evalRangeFormula(code, cbm);
-            if (Number.isFinite(rangeVal)) amount = rangeVal;
+
+        // 1) 20FT / 40HC 직접 값
+        const val20 = getNumberFromProp(props['20FT']);
+        const val40 = getNumberFromProp(props['40HC']);
+
+        // 2) CONSOLE 공식
+        const consoleAmt = calcConsoleAmount(props, cbm);
+
+        // 3) "기본 금액 요소가 하나라도 있는지" 플래그
+        const hasBaseCost =
+          Number.isFinite(val20) ||
+          Number.isFinite(val40) ||
+          Number.isFinite(consoleAmt);
+
+        // ────────────────────────────────
+        // 3-1) 타입별로 우선순위 적용
+        // ────────────────────────────────
+        if (type === '20FT') {
+          if (Number.isFinite(val20)) {
+            amount = val20;              // 20FT 값 최우선
+          } else if (Number.isFinite(consoleAmt)) {
+            amount = consoleAmt;         // 없으면 CONSOLE 공식
           }
-        
-          // 3순위: 일반 수학식
-          if (!Number.isFinite(amount)) {
-            const code = getFormulaText(props, FORMULA_PROP);
-            const exprVal = evalFormula(code, { cbm });
-            if (Number.isFinite(exprVal)) amount = exprVal;
+        } else if (type === '40HC') {
+          if (Number.isFinite(val40)) {
+            amount = val40;              // 40HC 값 최우선
+          } else if (Number.isFinite(consoleAmt)) {
+            amount = consoleAmt;
           }
-        
         } else {
-          // --- 20FT / 40HC ---
-          const direct = getNumberFromProp(props[type]);
-        
-          if (Number.isFinite(direct)) {
-            amount = direct;
-          } else {
-            // 콘솔 공식
-            amount = calcConsoleAmount(props, cbm);
-        
-            // 범위식
-            if (!Number.isFinite(amount)) {
-              const code = getFormulaText(props, FORMULA_PROP);
-              const rangeVal = evalRangeFormula(code, cbm);
-              if (Number.isFinite(rangeVal)) amount = rangeVal;
-            }
-        
-            // 일반식
-            if (!Number.isFinite(amount)) {
-              const code = getFormulaText(props, FORMULA_PROP);
-              const exprVal = evalFormula(code, { cbm });
-              if (Number.isFinite(exprVal)) amount = exprVal;
-            }
+          // type === 'CONSOLE'
+          if (Number.isFinite(consoleAmt)) {
+            amount = consoleAmt;         // CONSOLE 공식 우선
           }
         }
+
+        // ────────────────────────────────
+        // 3-2) 기본 요소(20FT/40HC/CONSOLE)가 전부 비어 있으면 → 계산식 사용
+        //     (컨테이너 타입 드롭다운과 무관하게 동일 규칙)
+        // ────────────────────────────────
+        if (!hasBaseCost) {
+          const code = getFormulaText(props, FORMULA_PROP);
+
+          // 1순위: 범위식 (1 ≤ CBM ≤ 10 = 150 같은 패턴)
+          let v = evalRangeFormula(code, cbm);
+          if (!Number.isFinite(v)) {
+            // 2순위: 일반 수학식 (50000 + (CBM-5)*10000)
+            v = evalFormula(code, { cbm });
+          }
+          if (Number.isFinite(v)) {
+            amount = v;
+          }
+        }
+
 
 
 
