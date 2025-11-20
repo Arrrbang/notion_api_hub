@@ -5,8 +5,8 @@ const express = require("express");
 const cors    = require("cors");
 const axios   = require("axios");
 
-// 지금은 OUTBOUND SOS만 사용
 const registerOutboundSosRoutes = require("./outboundsos");
+const registerInboundSosRoutes  = require("./inboundsos");
 
 const app = express();
 app.use(cors());
@@ -67,11 +67,11 @@ app.get(["/", "/api/health"], async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────
-   OUTBOUND SOS 라우트 등록
-   - GET /api/sos-rate/outbound
+   라우트 등록
 ────────────────────────────────────────────────────────── */
 
 registerOutboundSosRoutes(app);
+registerInboundSosRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
