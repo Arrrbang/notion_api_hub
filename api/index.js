@@ -1,13 +1,14 @@
 // api/index.js
-// 메인 엔트리: Express 앱 생성 + 각 모듈 라우트 등록
+// 메인 엔트리: Express 앱 생성 + SOS 라우트 등록 (+ Notion 연결 헬스체크)
 
 const express = require("express");
 const cors    = require("cors");
+const axios   = require("axios");
 
-// 새로 만든 도착지 모듈
+// 도착지 모듈
 const registerDestinationRoutes = require("./destination");
 
-// 기존 SOS 모듈
+// SOS 모듈
 const registerOutboundSosRoutes = require("./outboundsos");
 const registerInboundSosRoutes  = require("./inboundsos");
 
@@ -15,11 +16,80 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+/* ─────────────────────────────────────────────────────────
+   Notion 기본 설정 (SOS 모듈과 같은 ENV를 사용)
+────────────────────────────────────────────────────────── */
+
+const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+
+function notionHeaders() {
+  if (!NOTION_TOKEN) {
+    throw new Error("NOTION_API_KEY (또는 NOTION_TOKEN) is missing");
+  }
+  return {
+    Authorization: `Bearer ${NOTION_TOKEN}`,
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Health / Notion 연결 체크
+   - 프론트에서 백엔드/노션 연결 상태 확인용
+────────────────────────────────────────────────────────── */
+
+// 기본 헬스체크 + Notion 토큰/연결 확인
+app.get(["/", "/api/health"], async (req, res) => {
+  const tokenPresent = Boolean(NOTION_TOKEN);
+
+  // 토큰이 없으면 바로 에러 리턴 (서버는 살아 있지만 Notion 연결 불가)
+  if (!tokenPresent) {
+    return res.status(500).json({
+      ok: false,
+      notion: { tokenPresent: false },
+      error: "NOTION_API_KEY (또는 NOTION_TOKEN)이 설정되어 있지 않습니다."
+    });
+  }
+
+  try {
+    // 가벼운 Notion API 호출로 실제 연결 여부 확인
+    // 너무 무거운 쿼리 말고, /v1/users/me 정도만 사용
+    await axios.get("https://api.notion.com/v1/users/me", {
+      headers: notionHeaders()
+    });
+
+    res.json({
+      ok: true,
+      notion: { tokenPresent: true, reachable: true },
+      time: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      notion: { tokenPresent: true, reachable: false },
+      error: "Notion API 연결에 실패했습니다.",
+      details: e.response?.data || e.message || String(e)
+    });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────
+   라우트 등록
+   - /api/outboundsos
+   - /api/inboundsos
+   - /api/destination
+────────────────────────────────────────────────────────── */
+
 // 도착지(DESTINATION) 관련 라우트 등록
 registerDestinationRoutes(app);
 
 // SOS (기존) 라우트 등록
 registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
+
+
+/* ─────────────────────────────────────────────────────────
+   Export (Vercel @vercel/node)
+────────────────────────────────────────────────────────── */
 
 module.exports = app;
