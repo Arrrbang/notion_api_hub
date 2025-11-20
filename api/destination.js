@@ -160,6 +160,219 @@ function registerDestinationRoutes(app) {
       });
     }
   });
+
+  // 지역 → 업체 (중복 제거, 실제 데이터 기준 / REGION: multi_select)
+  app.get("/api/companies/by-region", async (req, res) => {
+    try {
+      const country = (req.query.country || "").trim();
+      const region  = (req.query.region  || "").trim();
+      if (!country || !region) {
+        return res.status(400).json({ ok:false, error:"country and region are required" });
+      }
+  
+      const dbids = getCountryDbIds(country);
+      if (dbids.length === 0) {
+        return res.json({ ok:true, country, region, companies: [], options: [] });
+      }
+  
+      const body = {
+        page_size: 100,
+        // 🔹 REGION 이 multi_select 이므로 multi_select.contains 사용
+        filter: {
+          property: REGION_PROP,
+          multi_select: { contains: region }
+        },
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+      };
+  
+      const results = await queryAllDatabases(dbids, body);
+  
+      const companies = uniq(
+        results.map(p => getSelectName(p.properties, COMPANY_PROP)).filter(Boolean)
+      ).sort((a, b) => a.localeCompare(b, "ko"));
+  
+      setCache(res);
+      // unified-partners.js 에서 j.companies 또는 j.options 둘 다 볼 수 있게 options도 같이 반환
+      res.json({
+        ok: true,
+        country,
+        region,
+        companies,
+        options: companies,
+        dbCount: dbids.length
+      });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: "companies-by-region failed",
+        details: e.message || String(e)
+      });
+    }
+  });
+  
+  // 지역 → POE (중복 제거, REGION: multi_select)
+  app.get("/api/poe/by-region", async (req, res) => {
+    try {
+      const country = (req.query.country || "").trim();
+      const region  = (req.query.region  || "").trim();
+      if (!country || !region) {
+        return res.status(400).json({ ok:false, error:"country and region are required" });
+      }
+  
+      const dbids = getCountryDbIds(country);
+      if (dbids.length === 0) {
+        return res.json({ ok:true, country, region, poes: [], options: [] });
+      }
+  
+      const body = {
+        page_size: 100,
+        filter: {
+          property: REGION_PROP,
+          multi_select: { contains: region }
+        },
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+      };
+  
+      const results = await queryAllDatabases(dbids, body);
+  
+      const poes = uniq(
+        results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+      ).sort((a, b) => a.localeCompare(b, "ko"));
+  
+      setCache(res);
+      res.json({
+        ok: true,
+        country,
+        region,
+        poes,
+        options: poes,
+        dbCount: dbids.length
+      });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: "poe-by-region failed",
+        details: e.message || String(e)
+      });
+    }
+  });
+  
+  // 업체+지역 → POE (중복 제거, REGION: multi_select)
+  app.get("/api/poe/by-company", async (req, res) => {
+    try {
+      const country = (req.query.country || "").trim();
+      const region  = (req.query.region  || "").trim();
+      const company = (req.query.company || "").trim();
+      if (!country || !region || !company) {
+        return res.status(400).json({
+          ok:false,
+          error:"country, region, company are required"
+        });
+      }
+  
+      const dbids = getCountryDbIds(country);
+      if (dbids.length === 0) {
+        return res.json({ ok:true, country, region, company, poes: [], options: [] });
+      }
+  
+      const body = {
+        page_size: 100,
+        filter: {
+          and: [
+            {
+              property: REGION_PROP,
+              multi_select: { contains: region }
+            },
+            {
+              property: COMPANY_PROP,
+              select: { equals: company }
+            }
+          ]
+        },
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+      };
+  
+      const results = await queryAllDatabases(dbids, body);
+  
+      const poes = uniq(
+        results.map(p => getSelectName(p.properties, POE_PROP)).filter(Boolean)
+      ).sort((a, b) => a.localeCompare(b, "ko"));
+  
+      setCache(res);
+      res.json({
+        ok: true,
+        country,
+        region,
+        company,
+        poes,
+        options: poes,
+        dbCount: dbids.length
+      });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: "poe-by-company failed",
+        details: e.message || String(e)
+      });
+    }
+  });
+  
+  // 화물타입 목록: 업체(필수) [+ 선택 지역] → multi_select "화물타입" 기준 distinct
+  app.get("/api/cargo-types/by-partner", async (req, res) => {
+    try {
+      const country = (req.query.country || "").trim();
+      const region  = (req.query.region  || "").trim(); // 선택
+      const company = (req.query.company || "").trim();
+      if (!country || !company) {
+        return res.status(400).json({ ok:false, error:"country and company are required" });
+      }
+  
+      const dbids = getCountryDbIds(country);
+      if (dbids.length === 0) {
+        return res.json({ ok:true, country, types: [], options: [] });
+      }
+  
+      const andFilters = [
+        { property: COMPANY_PROP, select: { equals: company } }
+      ];
+      if (region) {
+        andFilters.push({
+          property: REGION_PROP,
+          multi_select: { contains: region }
+        });
+      }
+  
+      const body = {
+        page_size: 100,
+        filter: (andFilters.length === 1 ? andFilters[0] : { and: andFilters }),
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+      };
+  
+      const results = await queryAllDatabases(dbids, body);
+  
+      const types = uniq(
+        results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
+      ).sort((a, b) => a.localeCompare(b, "ko"));
+  
+      setCache(res);
+      res.json({
+        ok: true,
+        country,
+        region: region || null,
+        company,
+        types,
+        options: types,
+        dbCount: dbids.length
+      });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: "cargo-types-by-partner failed",
+        details: e.message || String(e)
+      });
+    }
+  });
+
 }
 
 module.exports = registerDestinationRoutes;
