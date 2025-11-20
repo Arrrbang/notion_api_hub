@@ -1,5 +1,5 @@
 // backend/costs.js
-// 1번 표(기본표)용 /api/costs/:country 라우트
+// 1번 표(기본/추가 통합 데이터)용 /api/costs/:country 라우트
 
 const fs    = require('fs');
 const path  = require('path');
@@ -150,7 +150,7 @@ async function queryAllDatabases(dbIds, body) {
 }
 
 // ────────────────────────────────
-// 필터 로직 (지역/업체/POE/화물타입/기본)
+// 필터 로직 (지역/업체/POE/화물타입)
 // ────────────────────────────────
 function isRegionMatch(regionNames, selectedRegion) {
   // 선택 안 했으면 region 조건 없음
@@ -175,14 +175,17 @@ function isPoeMatch(poeNames, selectedPoe) {
 function isCargoMatch(cargoNames, roles) {
   if (!roles.length) return true;
   if (!cargoNames.length) {
-    // 화물타입이 비어 있으면 "모든 타입"으로 볼지 말지는 취향인데,
-    // 여기선 일단 포함(true)로 둠
+    // 화물타입이 비어 있으면 "모든 타입"으로 취급
     return true;
   }
   return cargoNames.some(c => roles.includes(c));
 }
 
-// CONSOLE 계산: MIN COST + ( (CBM - MIN CBM) * PER COST )
+// ────────────────────────────────
+// 금액 계산 관련
+// ────────────────────────────────
+
+// CONSOLE 계산: MIN COST + ((CBM - MIN CBM) * PER COST)
 function calcConsoleAmount(props, cbm) {
   const minCost = getNumberFromProp(props[MIN_COST_PROP]);
   const minCbm  = getNumberFromProp(props[MIN_CBM_PROP]);
@@ -197,22 +200,7 @@ function calcConsoleAmount(props, cbm) {
   return minCost + (cbm - minCbm) * perCost;
 }
 
-// CONSOLE 계산: MIN COST + ( (CBM - MIN CBM) * PER COST )
-function calcConsoleAmount(props, cbm) {
-  const minCost = getNumberFromProp(props[MIN_COST_PROP]);
-  const minCbm  = getNumberFromProp(props[MIN_CBM_PROP]);
-  const perCost = getNumberFromProp(props[PER_COST_PROP]);
-
-  if (!Number.isFinite(cbm))           return undefined;
-  if (!Number.isFinite(minCost))       return undefined;
-  if (!Number.isFinite(minCbm))        return undefined;
-  if (!Number.isFinite(perCost))       return undefined;
-
-  if (cbm <= minCbm) return minCost;
-  return minCost + (cbm - minCbm) * perCost;
-}
-
-// 🔽 새로 추가: Notion "계산식" 속성에서 수식 텍스트 읽기
+// Notion "계산식" 속성에서 수식 텍스트 읽기
 function getFormulaText(props, key) {
   const col = props?.[key];
   if (!col) return '';
@@ -227,7 +215,7 @@ function getFormulaText(props, key) {
   return String(col?.plain_text || '');
 }
 
-// 🔽 새로 추가: "50000 + (CBM-5)*10000" 같은 식을 평가
+// "50000 + (CBM-5)*10000" 같은 단순 수학식 평가
 function evalFormula(code, context) {
   if (!code) return undefined;
   let expr = String(code).trim();
@@ -245,7 +233,6 @@ function evalFormula(code, context) {
 
   try {
     // 최소한으로 감싼 eval
-    // (이 서버는 내부에서만 쓰고, 위에서 문자 필터링 했기 때문에 리스크는 낮음)
     const fn = new Function('"use strict"; return (' + expr + ');');
     const val = fn();
     return Number.isFinite(val) ? val : undefined;
@@ -254,30 +241,24 @@ function evalFormula(code, context) {
   }
 }
 
-// ------------------------------------------------------------
-// CBM 범위 매칭 공식 처리 (1≤CBM≤10 = 200)
-// ------------------------------------------------------------
+// CBM 범위 매칭 공식 처리 (예: "1 ≤ CBM ≤ 10 = 200")
 function evalRangeFormula(code, cbm) {
   if (!code) return undefined;
 
   const lines = code.split(/\n+/).map(s => s.trim()).filter(Boolean);
 
   for (const line of lines) {
-    //
     // 패턴 1: "1 ≤ CBM ≤ 10 = 200"
-    //
     let m = line.match(/^(\d+)\s*[<≤]\s*CBM\s*[<≤]\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      const low = Number(m[1]);
+      const low  = Number(m[1]);
       const high = Number(m[2]);
-      const val = Number(m[3]);
+      const val  = Number(m[3]);
       if (cbm >= low && cbm <= high) return val;
       continue;
     }
 
-    //
     // 패턴 2: "CBM > 20 = 400"
-    //
     m = line.match(/^CBM\s*([<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
       const op  = m[1];
@@ -294,21 +275,17 @@ function evalRangeFormula(code, cbm) {
       continue;
     }
 
-    //
     // 패턴 3: "0 < CBM < 11 = 200"
-    //
     m = line.match(/^(\d+)\s*<\s*CBM\s*<\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      const low = Number(m[1]);
+      const low  = Number(m[1]);
       const high = Number(m[2]);
       const val  = Number(m[3]);
       if (cbm > low && cbm < high) return val;
       continue;
     }
 
-    //
     // 패턴 4: "IF CBM < 11 THEN 200"
-    //
     m = line.match(/^IF\s+CBM\s*([<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
     if (m) {
       const op  = m[1];
@@ -325,14 +302,67 @@ function evalRangeFormula(code, cbm) {
       continue;
     }
 
-    //
-    // 패턴 5: ELSE 300
-    //
+    // 패턴 5: "ELSE 300"
     m = line.match(/^ELSE\s+(\d+)/i);
     if (m) return Number(m[1]);
   }
 
   return undefined;
+}
+
+// 공통 금액 계산 로직
+function computeAmount(props, type, cbm) {
+  let amount;
+
+  // 1) 20FT / 40HC 직접 값
+  const val20 = getNumberFromProp(props['20FT']);
+  const val40 = getNumberFromProp(props['40HC']);
+
+  // 2) CONSOLE 공식
+  const consoleAmt = calcConsoleAmount(props, cbm);
+
+  // 3) "기본 금액 요소가 하나라도 있는지" 플래그
+  const hasBaseCost =
+    Number.isFinite(val20) ||
+    Number.isFinite(val40) ||
+    Number.isFinite(consoleAmt);
+
+  // 3-1) 타입별 우선순위
+  if (type === '20FT') {
+    if (Number.isFinite(val20)) {
+      amount = val20;
+    } else if (Number.isFinite(consoleAmt)) {
+      amount = consoleAmt;
+    }
+  } else if (type === '40HC') {
+    if (Number.isFinite(val40)) {
+      amount = val40;
+    } else if (Number.isFinite(consoleAmt)) {
+      amount = consoleAmt;
+    }
+  } else {
+    // type === 'CONSOLE'
+    if (Number.isFinite(consoleAmt)) {
+      amount = consoleAmt;
+    }
+  }
+
+  // 3-2) 기본 요소(20FT/40HC/CONSOLE)가 전부 비어 있으면 → 계산식 사용
+  if (!hasBaseCost) {
+    const code = getFormulaText(props, FORMULA_PROP);
+
+    // 1순위: 범위식
+    let v = evalRangeFormula(code, cbm);
+    if (!Number.isFinite(v)) {
+      // 2순위: 일반 수학식
+      v = evalFormula(code, { cbm });
+    }
+    if (Number.isFinite(v)) {
+      amount = v;
+    }
+  }
+
+  return amount;
 }
 
 // ────────────────────────────────
@@ -348,8 +378,8 @@ function registerCostsRoutes(app) {
    *  - poe      : POE(다중선택 중 하나)
    *  - roles    : 화물타입(대문자로, 콤마구분) 예: roles=DIPLOMAT,NON-DIPLO
    *  - type     : "20FT" | "40HC" | "CONSOLE"
-   *  - cbm      : 숫자 (CONSOLE 계산에 사용)
-   *  - mode=data: 원본 Notion rows 그대로 반환 (cargo-types fallback 용)
+   *  - cbm      : 숫자 (CONSOLE/계산식에 사용)
+   *  - mode=data: 원본 Notion rows 그대로 반환
    */
   app.get('/api/costs/:country', async (req, res) => {
     try {
@@ -381,6 +411,7 @@ function registerCostsRoutes(app) {
         return res.json({
           ok: true,
           country,
+          type,
           rows: [],
           numberFormats: {},
           currency: 'USD',
@@ -403,7 +434,7 @@ function registerCostsRoutes(app) {
       // Notion에서 전체 페이지 읽기
       const pages = await queryAllDatabases(dbIds, body);
 
-      // mode=data 인 경우: 원본 그대로 돌려주기 (cargo-types fallback 용)
+      // mode=data 인 경우: 원본 그대로 돌려주기
       if (mode === 'data') {
         return res.json({
           ok: true,
@@ -412,7 +443,7 @@ function registerCostsRoutes(app) {
         });
       }
 
-      // 기본표(1번 표)용 rows 가공
+      // 최종 rows (기본 + 추가 모두 포함, basicType으로 구분)
       const rows = [];
 
       for (const page of pages) {
@@ -423,103 +454,18 @@ function registerCostsRoutes(app) {
         const poeNames    = getMultiSelectNames(props[POE_PROP]);
         const cargoNames  = getMultiSelectNames(props[CARGO_PROP]);
         const basicType   = getSelectName(props[BASIC_PROP]) || '';
+        const order       = getNumberFromProp(props[ORDER_PROP]) ?? getOrderNumber(page);
 
-        // 1) "기본/추가" 선별별
-        let rowsBasic = [];
-        let rowsExtra = [];
-        
-        for (const page of pages) {
-          const props = page.properties || {};
-        
-          const basicType = getSelectName(props[BASIC_PROP]) || '';
-        
-          // 금액 계산 로직 동일
-          const amount = computeAmount(props, type, cbm); // 네가 이미 쓰고 있는 금액 계산 함수
-        
-          const rowObj = {
-            id: page.id,
-            item: getTitle(props, ITEM_PROP),
-            extra: getRichText(props, EXTRA_PROP),
-            region: regionNames.join(','),
-            company: companyName,
-            poe: poeNames.join(','),
-            cargo: cargoNames.join(','),
-            basicType,
-            order: getNumberFromProp(props[ORDER_PROP]),
-            [type]: amount,
-          };
-        
-          if (basicType === '기본') rowsBasic.push(rowObj);
-          else if (basicType === '추가') rowsExtra.push(rowObj);
-        }
-
-
-        // 2) 지역/업체/POE/화물타입 필터
+        // 지역/업체/POE/화물타입 필터
         if (!isRegionMatch(regionNames, region))    continue;
         if (!isCompanyMatch(companyName, company))  continue;
         if (!isPoeMatch(poeNames, poe))            continue;
         if (!isCargoMatch(cargoNames, roles))      continue;
 
-        // 3) 금액 계산 (타입과 상관 없이 공통 규칙)
-        let amount;
+        // 금액 계산 (컨테이너 타입과 무관한 공통 규칙)
+        const amount = computeAmount(props, type, cbm);
 
-        // 1) 20FT / 40HC 직접 값
-        const val20 = getNumberFromProp(props['20FT']);
-        const val40 = getNumberFromProp(props['40HC']);
-
-        // 2) CONSOLE 공식
-        const consoleAmt = calcConsoleAmount(props, cbm);
-
-        // 3) "기본 금액 요소가 하나라도 있는지" 플래그
-        const hasBaseCost =
-          Number.isFinite(val20) ||
-          Number.isFinite(val40) ||
-          Number.isFinite(consoleAmt);
-
-        // ────────────────────────────────
-        // 3-1) 타입별로 우선순위 적용
-        // ────────────────────────────────
-        if (type === '20FT') {
-          if (Number.isFinite(val20)) {
-            amount = val20;              // 20FT 값 최우선
-          } else if (Number.isFinite(consoleAmt)) {
-            amount = consoleAmt;         // 없으면 CONSOLE 공식
-          }
-        } else if (type === '40HC') {
-          if (Number.isFinite(val40)) {
-            amount = val40;              // 40HC 값 최우선
-          } else if (Number.isFinite(consoleAmt)) {
-            amount = consoleAmt;
-          }
-        } else {
-          // type === 'CONSOLE'
-          if (Number.isFinite(consoleAmt)) {
-            amount = consoleAmt;         // CONSOLE 공식 우선
-          }
-        }
-
-        // ────────────────────────────────
-        // 3-2) 기본 요소(20FT/40HC/CONSOLE)가 전부 비어 있으면 → 계산식 사용
-        //     (컨테이너 타입 드롭다운과 무관하게 동일 규칙)
-        // ────────────────────────────────
-        if (!hasBaseCost) {
-          const code = getFormulaText(props, FORMULA_PROP);
-
-          // 1순위: 범위식 (1 ≤ CBM ≤ 10 = 150 같은 패턴)
-          let v = evalRangeFormula(code, cbm);
-          if (!Number.isFinite(v)) {
-            // 2순위: 일반 수학식 (50000 + (CBM-5)*10000)
-            v = evalFormula(code, { cbm });
-          }
-          if (Number.isFinite(v)) {
-            amount = v;
-          }
-        }
-
-
-
-
-        // 4) 항목/비고 텍스트
+        // 항목/비고 텍스트
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
         const extra = getRichText(props, EXTRA_PROP) || '';
 
@@ -530,30 +476,26 @@ function registerCostsRoutes(app) {
           company: companyName,
           poe: poeNames.join(', '),
           cargoTypes: cargoNames,
-          basicType,
+          basicType,         // "기본" / "추가"
+          order,
           [type]: amount ?? null,
           extra,
         });
-        rows.sort((a, b) => {
-          const oa = Number(a.order) || 0;
-          const ob = Number(b.order) || 0;
-          return oa - ob;
-        });
-        
-        // 최종 응답
-        return res.status(200).json({
-          ok: true,
-          ...
-          rows,
-        });
       }
 
-      res.json({
+      // "순서" 기준 정렬
+      rows.sort((a, b) => {
+        const oa = Number(a.order) || 0;
+        const ob = Number(b.order) || 0;
+        return oa - ob;
+      });
+
+      // 최종 응답
+      return res.json({
         ok: true,
         country,
         type,
         rows,
-        // 통화 포맷은 나중에 필요하면 확장 (지금은 심플하게)
         numberFormats: {},
         currency: 'USD',
       });
