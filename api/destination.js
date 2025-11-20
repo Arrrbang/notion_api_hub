@@ -381,67 +381,101 @@ function registerDestinationRoutes(app) {
   // ────────────────────────────────
   // 4) 업체 (+선택지역+POE) → 화물타입
   // ────────────────────────────────
+  // 4) 지역 + 업체 + POE → 화물타입
+  // - REGION_PROP: multi_select
+  // - COMPANY_PROP: select
+  // - POE_PROP: multi_select
+  // - DIPLO_PROP: multi_select (화물타입)
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
       const company = (req.query.company || "").trim();
-      const poe     = (req.query.poe     || "").trim();   // 🔥 추가
+      const poe     = (req.query.poe     || "").trim();
   
-      if (!country || !company || !poe) {
-        return res.status(400).json({ 
-          ok:false, 
-          error:"country, company, poe are required" 
+      if (!country || !region || !company || !poe) {
+        return res.status(400).json({
+          ok: false,
+          error: "country, region, company, poe are all required",
         });
       }
   
       const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok:true, country, types: [], options: [] });
-      }
-  
-      const andFilters = [
-        { property: COMPANY_PROP, select: { equals: company } },
-        { property: POE_PROP,     multi_select: { contains: poe } }   // 🔥 추가
-      ];
-  
-      if (region) {
-        andFilters.push({
-          property: REGION_PROP,
-          multi_select: { contains: region }
+      if (!dbids.length) {
+        return res.json({
+          ok: true,
+          country,
+          region,
+          company,
+          poe,
+          types: [],
+          options: [],
         });
       }
   
+      // 🔹 전체 페이지 읽기 (pagination 지원하는 queryAllDatabases 사용)
       const body = {
         page_size: 100,
-        filter: { and: andFilters },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
+        sorts: [{ property: ORDER_PROP, direction: "ascending" }],
       };
   
-      const results = await queryAllDatabases(dbids, body);
+      const pages = await queryAllDatabases(dbids, body);
+      const typeSet = new Set();
   
-      const types = uniq(
-        results.flatMap(p => getMultiSelectNames(p.properties, DIPLO_PROP))
-      ).sort((a, b) => a.localeCompare(b, "ko"));
+      for (const page of pages) {
+        const props = page.properties || {};
   
-      res.json({
+        // 1) REGION 일치 (multi_select 안에 선택된 region 포함)
+        const regionCol = props[REGION_PROP];
+        if (!regionCol || regionCol.type !== "multi_select") continue;
+        const regions = regionCol.multi_select || [];
+        const hasRegion = regions.some((opt) => opt && opt.name === region);
+        if (!hasRegion) continue;
+  
+        // 2) COMPANY 일치 (select)
+        const companyName = getSelectName(props, COMPANY_PROP);
+        if (!companyName || companyName !== company) continue;
+  
+        // 3) POE 일치 (multi_select 안에 선택된 poe 포함)
+        const poeCol = props[POE_PROP];
+        if (!poeCol || poeCol.type !== "multi_select") continue;
+        const poeItems = poeCol.multi_select || [];
+        const hasPOE = poeItems.some((opt) => opt && opt.name === poe);
+        if (!hasPOE) continue;
+  
+        // 4) 조건 통과한 행의 화물타입(DIPLO_PROP: multi_select) 값 수집
+        const typeNames = getMultiSelectNames(props, DIPLO_PROP);
+        typeNames.forEach((name) => typeSet.add(name));
+      }
+  
+      const types = Array.from(typeSet).sort((a, b) =>
+        a.localeCompare(b, "ko", { sensitivity: "base" })
+      );
+  
+      setCache(res);
+      return res.json({
         ok: true,
         country,
         region,
         company,
         poe,
         types,
-        options: types,
-        dbCount: dbids.length
+        options: types, // 프론트에서 j.options 로도 쓸 수 있게
+        dbCount: dbids.length,
       });
     } catch (e) {
-      res.status(500).json({
+      console.error(
+        "GET /api/cargo-types/by-partner error:",
+        e.response?.data || e
+      );
+      return res.status(500).json({
         ok: false,
         error: "cargo-types-by-partner failed",
-        details: e.message || String(e)
+        details: e.response?.data || e.message || String(e),
       });
     }
   });
+
 
 }
 
