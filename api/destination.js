@@ -169,49 +169,41 @@ function registerDestinationRoutes(app) {
         error: "country is required",
       });
     }
-
+  
     const dbIds = getCountryDbIds(country);
     if (!dbIds.length) {
-      // 선택된 국가에 DB가 없으면 빈 리스트 반환
       return res.json({ ok: true, country, regions: [] });
     }
-
+  
     if (!NOTION_TOKEN) {
       return res.status(500).json({
         ok: false,
         error: "NOTION_API_KEY (또는 NOTION_TOKEN)이 설정되어 있지 않습니다.",
       });
     }
-
+  
     try {
       const regionSet = new Set();
-
-      // 각 DB별로 query 호출해서 "지역" multi_select 값 수집
-      for (const dbId of dbIds) {
-        const body = {
-          page_size: 100, // 필요하면 나중에 pagination 추가 가능
-        };
-
-        const resp = await axios.post(
-          `https://api.notion.com/v1/databases/${dbId}/query`,
-          body,
-          { headers: notionHeaders() }
-        );
-
-        const results = resp.data?.results || [];
-        for (const page of results) {
-          const props = page.properties || {};
-          const col   = props[REGION_PROP];
-          if (!col || col.type !== "multi_select") continue;
-
-          const items = col.multi_select || [];
-          for (const opt of items) {
-            if (!opt?.name) continue;
-            regionSet.add(opt.name);
-          }
+  
+      // 🔥 pagination 지원 헬퍼 사용
+      const body = {
+        page_size: 100, // 있어도 되고, 없어도 됨 (어차피 전체 페이지 돌 거라)
+      };
+  
+      const results = await queryAllDatabases(dbIds, body);
+  
+      for (const page of results) {
+        const props = page.properties || {};
+        const col   = props[REGION_PROP];
+        if (!col || col.type !== "multi_select") continue;
+  
+        const items = col.multi_select || [];
+        for (const opt of items) {
+          if (!opt?.name) continue;
+          regionSet.add(opt.name);
         }
       }
-
+  
       const regions = sortKoAZ(Array.from(regionSet));
       res.json({ ok: true, country, regions, dbCount: dbIds.length });
     } catch (e) {
@@ -223,6 +215,7 @@ function registerDestinationRoutes(app) {
       });
     }
   });
+
 
   // ────────────────────────────────
   // 1) 지역 → 업체
