@@ -19,6 +19,8 @@ const BASIC_PROP      = process.env.BASIC_PROP       || '기본/추가';  // sel
 const ITEM_PROP       = process.env.ITEM_PROP        || '항목';       // title / rich_text
 const EXTRA_PROP      = process.env.EXTRA_PROP       || '참고사항';   // rich_text(없으면 "비고"로 바꿔도 됨)
 const FORMULA_PROP    = process.env.FORMULA_PROP     || '계산식';     // 수식 텍스트(50000 + (CBM-5)*10000)
+const DISPLAY_TYPE_PROP = process.env.DISPLAY_TYPE_PROP || '표시타입'; // select ("테이블", "숨김" 등)
+
 
 // CONSOLE 계산에 사용하는 속성
 const MIN_COST_PROP   = process.env.MIN_COST_PROP    || 'MIN COST';
@@ -454,6 +456,7 @@ function registerCostsRoutes(app) {
         const poeNames    = getMultiSelectNames(props[POE_PROP]);
         const cargoNames  = getMultiSelectNames(props[CARGO_PROP]);
         const basicType   = getSelectName(props[BASIC_PROP]) || '';
+        const displayType = getSelectName(props[DISPLAY_TYPE_PROP]) || '';
         const order       = getNumberFromProp(props[ORDER_PROP]) ?? getOrderNumber(page);
 
         // 지역/업체/POE/화물타입 필터
@@ -477,6 +480,7 @@ function registerCostsRoutes(app) {
           poe: poeNames.join(', '),
           cargoTypes: cargoNames,
           basicType,         // "기본" / "추가"
+          displayType,
           order,
           [type]: amount ?? null,
           extra,
