@@ -424,8 +424,35 @@ function registerCostsRoutes(app) {
         const cargoNames  = getMultiSelectNames(props[CARGO_PROP]);
         const basicType   = getSelectName(props[BASIC_PROP]) || '';
 
-        // 1) "기본/추가" 중 "기본"만 1번 표에 사용
-        if (basicType !== '기본') continue;
+        // 1) "기본/추가" 선별별
+        let rowsBasic = [];
+        let rowsExtra = [];
+        
+        for (const page of pages) {
+          const props = page.properties || {};
+        
+          const basicType = getSelectName(props[BASIC_PROP]) || '';
+        
+          // 금액 계산 로직 동일
+          const amount = computeAmount(props, type, cbm); // 네가 이미 쓰고 있는 금액 계산 함수
+        
+          const rowObj = {
+            id: page.id,
+            item: getTitle(props, ITEM_PROP),
+            extra: getRichText(props, EXTRA_PROP),
+            region: regionNames.join(','),
+            company: companyName,
+            poe: poeNames.join(','),
+            cargo: cargoNames.join(','),
+            basicType,
+            order: getNumberFromProp(props[ORDER_PROP]),
+            [type]: amount,
+          };
+        
+          if (basicType === '기본') rowsBasic.push(rowObj);
+          else if (basicType === '추가') rowsExtra.push(rowObj);
+        }
+
 
         // 2) 지역/업체/POE/화물타입 필터
         if (!isRegionMatch(regionNames, region))    continue;
