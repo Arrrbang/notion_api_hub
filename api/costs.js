@@ -65,6 +65,91 @@ function getTextFromRich(arr) {
   return a.map(t => t?.plain_text || '').join('');
 }
 
+function getTextFromRich(arr) {
+  const a = Array.isArray(arr) ? arr : [];
+  return a.map(t => t?.plain_text || '').join('');
+}
+
+/** 간단한 HTML 이스케이프 */
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"]/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+  }[m] || m));
+}
+
+/** Notion rich_text 배열을 HTML로 변환 (줄바꿈 + 볼드 위주) */
+function richTextToHtml(arr) {
+  const a = Array.isArray(arr) ? arr : [];
+  return a.map(t => {
+    if (!t) return '';
+
+    const ann = t.annotations || {};
+    // 기본 텍스트 (HTML 이스케이프 먼저)
+    let txt = escapeHtml(t.plain_text || '');
+
+    // 줄바꿈 → <br>
+    txt = txt.replace(/\n/g, '<br>');
+
+    // 스타일 적용 (노션이 지원하는 범위 중 자주 쓰는 것만)
+    if (ann.bold)         txt = `<strong>${txt}</strong>`;
+    if (ann.italic)       txt = `<em>${txt}</em>`;
+    if (ann.underline)    txt = `<u>${txt}</u>`;
+    if (ann.strikethrough)txt = `<s>${txt}</s>`;
+    if (ann.code)         txt = `<code>${txt}</code>`;
+
+    // 링크가 있으면 a 태그로 감싸기
+    const href = t.href || t.text?.link?.url;
+    if (href) {
+      const safeHref = String(href).replace(/"/g, '&quot;');
+      txt = `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+    }
+
+    return txt;
+  }).join('');
+}
+
+/** 참고사항 같이, 서식이 있는 속성을 HTML로 가져올 때 사용 */
+function getRichTextHtml(props, key) {
+  const col = props?.[key];
+  if (!col) return '';
+
+  if (col.type === 'rich_text') {
+    return richTextToHtml(col.rich_text);
+  }
+  if (col.type === 'title') {
+    return richTextToHtml(col.title);
+  }
+
+  return '';
+}
+
+function getTitle(props, key) {
+  const col = props?.[key];
+  if (!col) return '';
+  if (col.type === 'title') {
+    return getTextFromRich(col.title);
+  }
+  if (col.type === 'rich_text') {
+    return getTextFromRich(col.rich_text);
+  }
+  return '';
+}
+
+function getRichText(props, key) {
+  const col = props?.[key];
+  if (!col) return '';
+  if (col.type === 'rich_text') {
+    return getTextFromRich(col.rich_text);
+  }
+  if (col.type === 'title') {
+    return getTextFromRich(col.title);
+  }
+  return '';
+}
+
 function getTitle(props, key) {
   const col = props?.[key];
   if (!col) return '';
@@ -512,7 +597,8 @@ function registerCostsRoutes(app) {
 
         // 항목/비고 텍스트
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
-        const extra = getRichText(props, EXTRA_PROP) || '';
+        // 참고사항은 rich_text 서식을 HTML로 변환 (줄바꿈/볼드 등)
+        const extra = getRichTextHtml(props, EXTRA_PROP) || '';
 
         rows.push({
           id: page.id,
