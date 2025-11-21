@@ -312,8 +312,36 @@ function evalRangeFormula(code, cbm) {
   return undefined;
 }
 
+// REGION / DEFAULT / IF(...) 지원용 계산식 전처리
+function applyRegionFormula(code, selectedRegion, baseAmount, cbm) {
+  if (!code) return code;
+  let expr = String(code);
+
+  const regionVal  = (selectedRegion || '').trim();
+  const defaultVal = Number.isFinite(baseAmount) ? baseAmount : 0;
+
+  // DEFAULT → 숫자 치환
+  expr = expr.replace(/\bDEFAULT\b/gi, String(defaultVal));
+
+  // IF(REGION="...", A, B) 처리 (간단한 한 단계 IF 기준)
+  const ifRegex = /IF\(\s*REGION\s*=\s*("([^"]*)"|'([^']*)')\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/i;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    expr = expr.replace(ifRegex, function (match, quoted, dbl, sgl, thenPart, elsePart) {
+      changed = true;
+      const target = (dbl || sgl || '').trim();
+      const cond   = regionVal && regionVal === target;
+      return cond ? '(' + thenPart.trim() + ')' : '(' + elsePart.trim() + ')';
+    });
+  }
+
+  return expr;
+}
+
 // 공통 금액 계산 로직
-function computeAmount(props, type, cbm) {
+function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
 
   // 1) 20FT / 40HC 직접 값
@@ -329,7 +357,7 @@ function computeAmount(props, type, cbm) {
     Number.isFinite(val40) ||
     Number.isFinite(consoleAmt);
 
-  // 3-1) 타입별 우선순위
+  // 3-1) 타입별 우선순위 (기본 금액 계산)
   if (type === '20FT') {
     if (Number.isFinite(val20)) {
       amount = val20;
@@ -349,9 +377,19 @@ function computeAmount(props, type, cbm) {
     }
   }
 
-  // 3-2) 기본 요소(20FT/40HC/CONSOLE)가 전부 비어 있으면 → 계산식 사용
-  if (!hasBaseCost) {
-    const code = getFormulaText(props, FORMULA_PROP);
+  const baseAmount = amount;
+  const rawFormula = getFormulaText(props, FORMULA_PROP);
+
+  // 3-2) 계산식 사용 여부:
+  //  - 기본 금액이 없는 경우 (이전과 동일)
+  //  - 또는 계산식 안에 REGION / DEFAULT 가 들어있는 경우(지역/기본금액 조건식)
+  const shouldUseFormula =
+    rawFormula &&
+    (!hasBaseCost || /REGION\b|DEFAULT\b/i.test(rawFormula));
+
+  if (shouldUseFormula) {
+    const regionStr = selectedRegion || '';
+    const code = applyRegionFormula(rawFormula, regionStr, baseAmount, cbm);
 
     // 1순위: 범위식
     let v = evalRangeFormula(code, cbm);
@@ -366,6 +404,7 @@ function computeAmount(props, type, cbm) {
 
   return amount;
 }
+
 
 // ────────────────────────────────
 // 라우트 등록
@@ -466,7 +505,7 @@ function registerCostsRoutes(app) {
         if (!isCargoMatch(cargoNames, roles))      continue;
 
         // 금액 계산 (컨테이너 타입과 무관한 공통 규칙)
-        const amount = computeAmount(props, type, cbm);
+        const amount = computeAmount(props, type, cbm, region);
 
         // 항목/비고 텍스트
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
