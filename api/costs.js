@@ -317,6 +317,9 @@ function applyRegionFormula(code, selectedRegion, baseAmount, cbm) {
   if (!code) return code;
   let expr = String(code);
 
+  // 👉 스마트 따옴표를 일반 따옴표로 통일
+  expr = expr.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  
   const regionVal  = (selectedRegion || '').trim();
   const defaultVal = Number.isFinite(baseAmount) ? baseAmount : 0;
 
