@@ -93,10 +93,32 @@ module.exports = function registerOutboundSosRoutes(app) {
       if (!cbmStr)  return res.status(400).json({ ok:false, error:"CBM을 선택하세요" });
 
       const cbm = Number(cbmStr);
-      if (!Number.isInteger(cbm) || cbm < 1 || cbm > 80) {
+      if (Number.isNaN(cbm) || cbm < 1 || cbm > 80) {
         return res.status(400).json({ ok:false, error:"1~80cbm까지 조회가 가능합니다." });
       }
-
+      
+      // ─────────────────────────────────────────────
+      // 🔹 소수점 CBM 계산 (예: 26.5 → 26 + (27-26)*0.5)
+      //    정수 CBM: 기존 로직 사용
+      //    소수 CBM: floor/ceil 기반 선형 보간
+      // ─────────────────────────────────────────────
+      let fractionalValue = null;
+      
+      if (!Number.isInteger(cbm)) {
+        const floor = Math.floor(cbm);
+        const ceil  = floor + 1;
+      
+        const vFloor = getCbmColValue(floor);
+        const vCeil  = getCbmColValue(ceil);
+      
+        if (vFloor != null && vCeil != null) {
+          const decimal = cbm - floor;          // 0.1 ~ 0.9
+          const diff = vCeil - vFloor;          // ceil 값 - floor 값
+          fractionalValue = vFloor + diff * decimal;
+        } else {
+          fractionalValue = null;
+        }
+      }
       // 타입 매핑: 프론트 → 노션
       const typeMap = {
         "CONSOLE": "GRP",
@@ -250,7 +272,10 @@ module.exports = function registerOutboundSosRoutes(app) {
         const dateObj = props["적용일"]?.date || null;
         
         // 최종 value = "추가"까지 다 더해진 값
-        const value = computedValue;
+        let value = computedValue;
+        if (!Number.isInteger(cbm) && fractionalValue != null) {
+          value = fractionalValue;
+        }
         
         setCache(res);
         return res.json({
