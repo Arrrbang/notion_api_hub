@@ -97,28 +97,6 @@ module.exports = function registerOutboundSosRoutes(app) {
         return res.status(400).json({ ok:false, error:"1~80cbm까지 조회가 가능합니다." });
       }
       
-      // ─────────────────────────────────────────────
-      // 🔹 소수점 CBM 계산 (예: 26.5 → 26 + (27-26)*0.5)
-      //    정수 CBM: 기존 로직 사용
-      //    소수 CBM: floor/ceil 기반 선형 보간
-      // ─────────────────────────────────────────────
-      let fractionalValue = null;
-      
-      if (!Number.isInteger(cbm)) {
-        const floor = Math.floor(cbm);
-        const ceil  = floor + 1;
-      
-        const vFloor = getCbmColValue(floor);
-        const vCeil  = getCbmColValue(ceil);
-      
-        if (vFloor != null && vCeil != null) {
-          const decimal = cbm - floor;          // 0.1 ~ 0.9
-          const diff = vCeil - vFloor;          // ceil 값 - floor 값
-          fractionalValue = vFloor + diff * decimal;
-        } else {
-          fractionalValue = null;
-        }
-      }
       // 타입 매핑: 프론트 → 노션
       const typeMap = {
         "CONSOLE": "GRP",
@@ -265,7 +243,40 @@ module.exports = function registerOutboundSosRoutes(app) {
             }
           }
         }
-        
+      
+        // ─────────────────────────────────────────────
+        // 🔹 fractional CBM 계산 (정확한 삽입 위치)
+        //    → computedValue가 계산된 “바로 아래”
+        // ─────────────────────────────────────────────
+        let fractionalValue = null;
+
+        if (!Number.isInteger(cbm)) {
+          const floor = Math.floor(cbm);
+          const ceil  = floor + 1;
+
+          let vFloor, vCeil;
+
+          // threshold 아래(1~28 또는 1~60) : 노션 테이블 값 사용
+          if (cbm <= threshold) {
+            vFloor = getCbmColValue(floor);
+            vCeil  = getCbmColValue(ceil);
+          }
+          // threshold 위(예: 61.5 CBM) : threshold 값 + 추가단가 이용
+          else {
+            vFloor = baseValue + addPerCbm * (floor - threshold);
+            vCeil  = baseValue + addPerCbm * (ceil  - threshold);
+          }
+
+          if (vFloor != null && vCeil != null) {
+            const decimal = cbm - floor;  
+            fractionalValue = vFloor + (vCeil - vFloor) * decimal;
+          }
+        }
+        // ─────────────────────────────────────────────
+        // fractional CBM 계산 끝
+        // ───────────────────────────────────────────── 
+
+      
         // 기존 extra/이름/적용일 처리 (메모용 rich_text가 따로 있다면 여기에 바인딩)
         const extra   = richTextToPlain(props["메모"]?.rich_text || []); // 필요시 속성명 조정
         const name    = richTextToPlain(props["이름"]?.title || []);
