@@ -248,6 +248,8 @@ module.exports = function registerOutboundSosRoutes(app) {
         // 🔹 fractional CBM 계산 (정확한 삽입 위치)
         //    → computedValue가 계산된 “바로 아래”
         // ─────────────────────────────────────────────
+
+        const threshold = (notionType === "20") ? 28 : 60;
         let fractionalValue = null;
 
         if (!Number.isInteger(cbm)) {
