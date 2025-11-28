@@ -89,7 +89,7 @@ module.exports = function registerInboundSosRoutes(app) {
       if (!cbmStr)  return res.status(400).json({ ok:false, error:"CBM을 선택하세요" });
 
       const cbm = Number(cbmStr);
-      if (!Number.isInteger(cbm) || cbm < 1 || cbm > 80) {
+      if (Number.isNaN(cbm) || cbm < 1 || cbm > 80) {
         return res.status(400).json({ ok:false, error:"1~80cbm까지 조회가 가능합니다." });
       }
 
@@ -239,14 +239,42 @@ module.exports = function registerInboundSosRoutes(app) {
             }
           }
         }
-        
+
+      // ─────────────────────────────────────────────
+      // 🔹 fractional CBM 처리 (예: 26.5 → 26 + (27−26)*0.5)
+      // ─────────────────────────────────────────────
+      let fractionalValue = null;
+      const threshold = (notionType === "20") ? 28 : 60;
+      
+      if (!Number.isInteger(cbm)) {
+        const floor = Math.floor(cbm);
+        const ceil  = floor + 1;
+        const decimal = cbm - floor;
+      
+        let vFloor, vCeil;
+      
+        if (cbm <= threshold) {
+          vFloor = getCbmColValue(floor);
+          vCeil  = getCbmColValue(ceil);
+        } else {
+          const baseAt = getCbmColValue(threshold);
+          vFloor = baseAt + addPerCbm * (floor - threshold);
+          vCeil  = baseAt + addPerCbm * (ceil  - threshold);
+        }
+      
+        if (vFloor != null && vCeil != null) {
+          fractionalValue = vFloor + (vCeil - vFloor) * decimal;
+        }
+      }
+
         // 기존 extra/이름/적용일 처리 (메모용 rich_text가 따로 있다면 여기에 바인딩)
         const extra   = richTextToPlain(props["메모"]?.rich_text || []); // 필요시 속성명 조정
         const name    = richTextToPlain(props["이름"]?.title || []);
         const dateObj = props["적용일"]?.date || null;
         
         // 최종 value = "추가"까지 다 더해진 값
-        const value = computedValue;
+        const value = (fractionalValue != null) ? fractionalValue : computedValue;
+
         
         setCache(res);
         return res.json({
