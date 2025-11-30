@@ -88,7 +88,7 @@ module.exports = function (app) {
         // C. EV+셔틀 작업비 (CBM 기반 - 합산 방식) [신규 로직]
         // ──────────────────────────────────────────
         // 노션 항목명이 "EV+셔틀 작업비" 라고 가정 (HTML 라벨 기준)
-        if (itemName === "EV+셔틀 작업비") {
+        if (itemName === "EV,셔틀,계단 작업비") {
             const cbmIndex = Math.ceil(targetCBM);
 
             if (cbmIndex <= 25) {
