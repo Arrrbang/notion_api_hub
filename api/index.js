@@ -9,6 +9,7 @@ const registerDestinationRoutes = require("./destination");
 const registerOutboundSosRoutes = require("./outboundsos");
 const registerInboundSosRoutes  = require("./inboundsos");
 const registerCostsRoutes       = require('./costs');
+const registerYesg2mRoutes      = require('./ExternalPackagingCosts/yesg2m');
 
 const app = express();
 app.use(cors());
@@ -76,6 +77,7 @@ registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
 registerDestinationRoutes(app);
 registerCostsRoutes(app);  
+registerYesg2mRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
