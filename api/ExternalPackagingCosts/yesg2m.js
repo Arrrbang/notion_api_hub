@@ -36,10 +36,13 @@ module.exports = function (app) {
       const rows = response.data.results;
 
       // 결과값 초기화
-      let surveyFee = 0;   // 방문 견적비
-      let packingFee = 0;  // 포장 작업비
-      let travelFee = 0;   // 지역 출장비
-      let shuttleFee = 0;  // EV+셔틀 작업비 (신규 추가)
+      let surveyFee = 0;          // 방문 견적비
+      let packingFee = 0;         // 포장 작업비
+      let travelFee = 0;          // 지역 출장비
+      let shuttleFee = 0;         // EV+셔틀 작업비
+      let woodenCrateFee = 0;     // 우든 제작비용 (NEW)
+      let storageFee = 0;         // 창고 보관료 (NEW)
+      let loadingUnloadingFee = 0;// 창고 보관 상하차 비용 (NEW)
 
       // 2. 데이터 순회 및 비용 계산
       for (const row of rows) {
@@ -85,27 +88,45 @@ module.exports = function (app) {
         }
 
         // ──────────────────────────────────────────
-        // C. EV+셔틀 작업비 (CBM 기반 - 합산 방식) [신규 로직]
+        // C. EV+셔틀 작업비 (CBM 기반 - 합산 방식)
         // ──────────────────────────────────────────
-        // 노션 항목명이 "EV+셔틀 작업비" 라고 가정 (HTML 라벨 기준)
-        if (itemName === "EV,셔틀,계단 작업비") {
+        if (itemName === "EV+셔틀 작업비") {
             const cbmIndex = Math.ceil(targetCBM);
 
             if (cbmIndex <= 25) {
-                // 25 이하: 해당 CBM 값 그대로 가져오기
+                // 25 이하: 해당 CBM 값 그대로
                 const key = `CBM (${cbmIndex})`;
                 shuttleFee = props[key]?.number || 0;
             } else {
                 // 26 이상: CBM(25) + CBM(나머지)
-                // 예: 27 -> CBM(25) + CBM(2)
                 const baseValue = props["CBM (25)"]?.number || 0;
-                
                 const remainder = cbmIndex - 25;
                 const remainderKey = `CBM (${remainder})`;
                 const remainderValue = props[remainderKey]?.number || 0;
                 
                 shuttleFee = baseValue + remainderValue;
             }
+        }
+
+        // ──────────────────────────────────────────
+        // D. 기타 비용 (단순 조회 및 곱하기 연산) [NEW]
+        // ──────────────────────────────────────────
+        
+        // 1. 우든 제작비용 (단순 금액 조회)
+        if (itemName === "우든 제작비용") {
+            woodenCrateFee = props["금액"]?.number || 0;
+        }
+
+        // 2. 창고 보관료 (단순 금액 조회)
+        if (itemName === "창고 보관료") {
+            storageFee = props["금액"]?.number || 0;
+        }
+
+        // 3. 창고 보관 상하차 비용 (금액 * CBM)
+        if (itemName === "창고 보관 상하차 비용") {
+            const unitPrice = props["금액"]?.number || 0;
+            // 입력된 CBM 만큼 곱하기
+            loadingUnloadingFee = unitPrice * targetCBM;
         }
       }
 
@@ -128,7 +149,10 @@ module.exports = function (app) {
           surveyFee,
           packingFee,
           travelFee,
-          shuttleFee // 추가된 결과
+          shuttleFee,
+          woodenCrateFee,      // 추가
+          storageFee,          // 추가
+          loadingUnloadingFee  // 추가
         }
       });
 
