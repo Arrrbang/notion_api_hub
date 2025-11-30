@@ -100,7 +100,7 @@ module.exports = function (app) {
         }
 
         // ──────────────── Cost Logic C ────────────────
-        if (itemName === "EV+셔틀 작업비") {
+        if (itemName === "EV,셔틀,계단 작업비") {
             const cbmIndex = Math.ceil(targetCBM);
             if (cbmIndex <= 25) {
                 shuttleFee = props[`CBM (${cbmIndex})`]?.number || 0;
