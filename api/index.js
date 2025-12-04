@@ -12,10 +12,11 @@ const registerCostsRoutes       = require('./costs');
 const registerYesg2mRoutes      = require('./ExternalPackagingCosts/yesg2m');
 const registerHansolRoutes      = require('./ExternalPackagingCosts/hansol');
 const registerNoticeRoutes      = require('./notice');
+const registerSaveHistoryRoutes = require('./account/saveHistory');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 /* ─────────────────────────────────────────────────────────
    Notion 기본 설정 (상태 확인용 헬스체크에만 사용)
@@ -82,6 +83,7 @@ registerCostsRoutes(app);
 registerYesg2mRoutes(app);
 registerHansolRoutes(app);
 registerNoticeRoutes(app);
+registerSaveHistoryRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
