@@ -1,4 +1,4 @@
-// api/account/saveHistory.js
+// api/account/saveHistory.js (수정됨: 100개 블록 제한 해결)
 const axios = require("axios");
 
 module.exports = function (app) {
@@ -6,62 +6,41 @@ module.exports = function (app) {
     try {
       const { name, id, date, b3Date, dataMap } = req.body;
 
-      // 1. 환경변수 및 데이터베이스 ID 확인
       const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
-      const DATABASE_ID = "2bf0b10191ce80568082ddb4deaab532"; // 사용자님이 알려주신 ID
+      const DATABASE_ID = "2bf0b10191ce80568082ddb4deaab532"; 
 
       if (!NOTION_TOKEN) {
         return res.status(500).json({ ok: false, error: "Notion Token이 없습니다." });
       }
 
-      // 2. 방대한 JSON 데이터를 문자열로 변환 후 2000자 단위로 쪼개기 (Notion 제약 해결)
+      // 1. JSON 데이터 분할 (2000자 단위)
       const jsonString = JSON.stringify(dataMap);
       const chunks = [];
       for (let i = 0; i < jsonString.length; i += 2000) {
         chunks.push(jsonString.substring(i, i + 2000));
       }
 
-      // 3. 쪼갠 데이터를 노션 '코드 블록'들로 변환
-      const childrenBlocks = chunks.map((chunk) => ({
+      // 2. 노션 블록 형태로 변환
+      const allBlocks = chunks.map((chunk) => ({
         object: "block",
         type: "code",
         code: {
           language: "json",
-          rich_text: [
-            {
-              type: "text",
-              text: { content: chunk },
-            },
-          ],
+          rich_text: [{ type: "text", text: { content: chunk } }],
         },
       }));
 
-      // 4. 노션 API 호출 (페이지 생성)
-      const response = await axios.post(
+      // 3. 페이지 먼저 생성 (내용 없이 껍데기만)
+      const createResponse = await axios.post(
         "https://api.notion.com/v1/pages",
         {
           parent: { database_id: DATABASE_ID },
           properties: {
-            "이름": {
-              title: [
-                {
-                  text: { content: name },
-                },
-              ],
-            },
-            "ID": {
-              number: Number(id),
-            },
-            "저장일시": {
-              date: { start: new Date().toISOString() }, // 현재 시간 (ISO 8601)
-            },
-            "기준일자": {
-              // b3Date가 있으면 ISO 포맷으로, 없으면 null
-              date: b3Date ? { start: new Date(b3Date).toISOString() } : null,
-            },
+            "이름": { title: [{ text: { content: name } }] },
+            "ID": { number: Number(id) },
+            "저장일시": { date: { start: new Date().toISOString() } },
+            "기준일자": { date: b3Date ? { start: new Date(b3Date).toISOString() } : null },
           },
-          // 본문(Body)에 쪼개진 JSON 데이터 블록들 추가
-          children: childrenBlocks,
         },
         {
           headers: {
@@ -72,15 +51,35 @@ module.exports = function (app) {
         }
       );
 
-      // 5. 성공 응답
-      res.status(200).json({ ok: true, message: "Notion에 저장되었습니다.", pageId: response.data.id });
+      const pageId = createResponse.data.id;
+
+      // 4. 블록을 100개씩 나누어서 추가 (Append Children)
+      // Notion API 제한: 한 번에 100개까지만 추가 가능
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < allBlocks.length; i += BATCH_SIZE) {
+        const batch = allBlocks.slice(i, i + BATCH_SIZE);
+        
+        await axios.patch(
+          `https://api.notion.com/v1/blocks/${pageId}/children`,
+          { children: batch },
+          {
+            headers: {
+              Authorization: `Bearer ${NOTION_TOKEN}`,
+              "Content-Type": "application/json",
+              "Notion-Version": "2022-06-28",
+            },
+          }
+        );
+      }
+
+      res.status(200).json({ ok: true, message: "저장 완료", pageId: pageId });
 
     } catch (error) {
-      console.error("Notion 저장 실패:", error.response?.data || error.message);
+      console.error("Notion Error:", error.response?.data || error.message);
       res.status(500).json({
         ok: false,
-        error: "Notion 저장 중 오류가 발생했습니다.",
-        details: error.response?.data || error.message,
+        error: "Notion 저장 실패",
+        details: error.response?.data || error.message, // 프론트엔드에서 원인 확인용
       });
     }
   });
