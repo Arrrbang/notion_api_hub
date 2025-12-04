@@ -13,6 +13,9 @@ const registerYesg2mRoutes      = require('./ExternalPackagingCosts/yesg2m');
 const registerHansolRoutes      = require('./ExternalPackagingCosts/hansol');
 const registerNoticeRoutes      = require('./notice');
 const registerSaveHistoryRoutes = require('./account/saveHistory');
+const registerGetHistoryListRoutes = require('./account/getHistoryList');
+const registerGetHistoryItemRoutes = require('./account/getHistoryItem');
+const registerDeleteHistoryRoutes = require('./account/deleteHistory');
 
 const app = express();
 app.use(cors());
@@ -84,6 +87,9 @@ registerYesg2mRoutes(app);
 registerHansolRoutes(app);
 registerNoticeRoutes(app);
 registerSaveHistoryRoutes(app);
+registerGetHistoryListRoutes(app);
+registerGetHistoryItemRoutes(app);
+registerDeleteHistoryRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
