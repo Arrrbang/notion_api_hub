@@ -1,26 +1,31 @@
-// api/account/saveHistory.js (수정됨: 100개 블록 제한 해결)
+// api/account/saveHistory.js
+
 const axios = require("axios");
 
 module.exports = function (app) {
   app.post("/api/account/save-history", async (req, res) => {
     try {
-      const { name, id, date, b3Date, dataMap } = req.body;
+      // 1. 요청 데이터 받기
+      const payload = req.body; // { name, id, b3Date, dataMap ... } 전체
+      const { name, id, b3Date } = payload; // 헤더용 변수만 따로 추출
 
       const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
       const DATABASE_ID = "2bf0b10191ce80568082ddb4deaab532"; 
 
-      if (!NOTION_TOKEN) {
-        return res.status(500).json({ ok: false, error: "Notion Token이 없습니다." });
-      }
+      if (!NOTION_TOKEN) return res.status(500).json({ ok: false, error: "Notion Token 없음" });
 
-      // 1. JSON 데이터 분할 (2000자 단위)
-      const jsonString = JSON.stringify(dataMap);
+      // ========================================================
+      // [수정됨] dataMap만 저장하던 것을 payload(전체) 저장으로 변경
+      // ========================================================
+      const jsonString = JSON.stringify(payload); 
+      
+      // 2000자 단위 분할
       const chunks = [];
       for (let i = 0; i < jsonString.length; i += 2000) {
         chunks.push(jsonString.substring(i, i + 2000));
       }
 
-      // 2. 노션 블록 형태로 변환
+      // 블록 생성
       const allBlocks = chunks.map((chunk) => ({
         object: "block",
         type: "code",
@@ -30,7 +35,7 @@ module.exports = function (app) {
         },
       }));
 
-      // 3. 페이지 먼저 생성 (내용 없이 껍데기만)
+      // 페이지 생성 (헤더 정보)
       const createResponse = await axios.post(
         "https://api.notion.com/v1/pages",
         {
@@ -53,12 +58,10 @@ module.exports = function (app) {
 
       const pageId = createResponse.data.id;
 
-      // 4. 블록을 100개씩 나누어서 추가 (Append Children)
-      // Notion API 제한: 한 번에 100개까지만 추가 가능
+      // 블록 이어붙이기 (100개 제한 대응)
       const BATCH_SIZE = 100;
       for (let i = 0; i < allBlocks.length; i += BATCH_SIZE) {
         const batch = allBlocks.slice(i, i + BATCH_SIZE);
-        
         await axios.patch(
           `https://api.notion.com/v1/blocks/${pageId}/children`,
           { children: batch },
@@ -79,7 +82,7 @@ module.exports = function (app) {
       res.status(500).json({
         ok: false,
         error: "Notion 저장 실패",
-        details: error.response?.data || error.message, // 프론트엔드에서 원인 확인용
+        details: error.response?.data || error.message,
       });
     }
   });
