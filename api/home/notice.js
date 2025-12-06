@@ -20,7 +20,35 @@ function extractKoreanName(text) {
   return match ? match[0] : ""; 
 }
 
-// 1. 목록 조회 (기존과 동일)
+// [핵심 추가] 자식 블록을 재귀적으로 가져오는 함수 (깊이 제한: 3단계)
+// Vercel 타임아웃 방지를 위해 깊이를 너무 깊게 하지 않습니다.
+async function fetchChildrenRecursively(blockId, depth = 0) {
+    if (depth > 4) return []; // 너무 깊으면 중단
+
+    try {
+        const response = await axios.get(
+            `https://api.notion.com/v1/blocks/${blockId}/children?page_size=100`,
+            { headers: notionHeaders() }
+        );
+        
+        let blocks = response.data.results;
+
+        // 가져온 블록들 중에 또 자식이 있는 놈(has_children)이 있다면? -> 또 파고든다!
+        const detailedBlocks = await Promise.all(blocks.map(async (block) => {
+            if (block.has_children && block.type !== 'child_page') {
+                block.children = await fetchChildrenRecursively(block.id, depth + 1);
+            }
+            return block;
+        }));
+
+        return detailedBlocks;
+    } catch (e) {
+        console.warn(`Fetch error for block ${blockId}:`, e.message);
+        return [];
+    }
+}
+
+// 1. 목록 조회
 router.get("/", async (req, res) => {
   try {
     const response = await axios.post(
@@ -52,38 +80,13 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 2. [수정] 상세 본문 조회 (토글 내부 내용 가져오기 추가)
+// 2. [수정] 상세 본문 조회 (재귀 함수 사용)
 router.get("/:pageId", async (req, res) => {
   try {
     const { pageId } = req.params;
     
-    // 1단계: 최상위 블록 가져오기
-    const response = await axios.get(
-      `https://api.notion.com/v1/blocks/${pageId}/children?page_size=100`,
-      { headers: notionHeaders() }
-    );
-
-    let blocks = response.data.results;
-
-    // 2단계: 자식이 있는 블록(토글 등)은 내부 내용을 한 번 더 조회 (Deep Fetch)
-    // Promise.all을 사용하여 병렬 처리
-    const blocksWithChildren = await Promise.all(blocks.map(async (block) => {
-        // 자식이 있고, 페이지가 아닌 경우 (토글, 불렛 등)
-        if (block.has_children && block.type !== 'child_page') {
-            try {
-                const childRes = await axios.get(
-                    `https://api.notion.com/v1/blocks/${block.id}/children?page_size=100`,
-                    { headers: notionHeaders() }
-                );
-                // 가져온 자식들을 현재 블록의 .children 속성에 저장
-                block.children = childRes.data.results;
-            } catch (e) {
-                console.warn(`Failed to fetch children for block ${block.id}`);
-                block.children = [];
-            }
-        }
-        return block;
-    }));
+    // 재귀 함수를 통해 모든 하위 블록을 싹 긁어옵니다.
+    const blocksWithChildren = await fetchChildrenRecursively(pageId);
 
     res.json({ ok: true, data: blocksWithChildren });
 
