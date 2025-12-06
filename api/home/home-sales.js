@@ -42,7 +42,9 @@ function formatNotionPage(page) {
   const packingDate = (props["포장일"]?.date?.start || "").split("T")[0];
 
   // 추가 필드
-  const poe = props["POE"]?.select?.name || props["POE"]?.rich_text?.[0]?.plain_text || ""; 
+  const poeRaw = props["POE"]?.select?.name || props["POE"]?.rich_text?.[0]?.plain_text || "";
+  const poe = poeRaw.replace(/\[[a-zA-Z]{5}\]\s*/, "");
+  
   const salesRep = props["영업담당"]?.select?.name || "";
   
   // [NEW] CBM 추가 (숫자 속성)
