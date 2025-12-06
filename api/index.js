@@ -16,7 +16,7 @@ const registerSaveHistoryRoutes = require('./account/saveHistory');
 const registerGetHistoryListRoutes = require('./account/getHistoryList');
 const registerGetHistoryItemRoutes = require('./account/getHistoryItem');
 const registerDeleteHistoryRoutes = require('./account/deleteHistory');
-const registerSalesHomeRoutes = require('./home/home');
+const registerSalesHomeRoutes = require('./home/home-sales');
 const registerHomeNoticeRoutes = require('./home/notice');
 
 const app = express();
