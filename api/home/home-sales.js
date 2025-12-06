@@ -31,19 +31,23 @@ function formatNotionPage(page) {
   
   const clientName = props["고객명"]?.title?.[0]?.plain_text || "이름 없음";
   
-  // 국가: 한글만 추출
+  // 국가
   const countryRaw = props["국가"]?.select?.name || "";
   const country = countryRaw.match(/[가-힣]+/g)?.join(" ") || countryRaw;
   
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
   
-  // 날짜 형식에서 시간 제거 (YYYY-MM-DD)
+  // 날짜
   const deadline = (props["서류마감"]?.date?.start || "").split("T")[0];
-  const packingDate = (props["포장일"]?.date?.start || "").split("T")[0]; // [NEW] 포장일
+  const packingDate = (props["포장일"]?.date?.start || "").split("T")[0];
 
-  // [NEW] 추가 필드
+  // 추가 필드
   const poe = props["POE"]?.select?.name || props["POE"]?.rich_text?.[0]?.plain_text || ""; 
   const salesRep = props["영업담당"]?.select?.name || "";
+  
+  // [NEW] CBM 추가 (숫자 속성)
+  // 값이 없으면 0으로 처리하거나, 빈 문자열 ""로 처리 가능합니다. 여기선 0으로 처리.
+  const cbm = props["CBM"]?.number || 0; 
 
   return {
     id: page.id,
@@ -51,9 +55,10 @@ function formatNotionPage(page) {
     country,
     assignees,
     deadline,
-    packingDate, // [NEW]
-    poe,         // [NEW]
-    salesRep     // [NEW]
+    packingDate,
+    poe,
+    salesRep,
+    cbm
   };
 }
 
