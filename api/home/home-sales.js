@@ -29,7 +29,8 @@ function formatNotionPage(page) {
   const props = page.properties;
   
   const clientName = props["고객명"]?.title?.[0]?.plain_text || "이름 없음";
-  const country = props["국가"]?.select?.name || "";
+  const countryRaw = props["국가"]?.select?.name || "";
+  const country = countryRaw.match(/[가-힣]+/g)?.join(" ") || countryRaw;
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
   const deadline = props["서류마감"]?.date?.start || "";
 
