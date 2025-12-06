@@ -15,7 +15,10 @@ function notionHeaders() {
 }
 
 const USER_MAPPING = {
-  "admin": "정창락",
+  "admin": "관리자",
+  "crjung": "정창락",
+  "opere": "지아름"
+  
 };
 
 function getDateString(date) {
