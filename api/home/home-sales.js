@@ -136,5 +136,5 @@ router.get("/", async (req, res) => {
 });
 
 module.exports = (app) => {
-  app.use("/api/home", router);
+  app.use("/api/home/home-sales", router);
 };
