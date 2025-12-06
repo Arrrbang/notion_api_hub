@@ -22,26 +22,18 @@ function getDateString(date) {
   return date.toISOString().split('T')[0];
 }
 
-// [수정] 노션 데이터 포맷팅 함수 (국가 추가)
 function formatNotionPage(page) {
   const props = page.properties;
   
-  // 1. 고객명
   const clientName = props["고객명"]?.title?.[0]?.plain_text || "이름 없음";
-  
-  // 2. [추가] 국가 (선택 속성)
   const country = props["국가"]?.select?.name || "";
-
-  // 3. 업무담당
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
-  
-  // 4. 서류마감
   const deadline = props["서류마감"]?.date?.start || "";
 
   return {
     id: page.id,
     clientName,
-    country, // 여기에 국가 데이터 추가
+    country,
     assignees,
     deadline
   };
@@ -62,7 +54,9 @@ router.get("/", async (req, res) => {
     const todayStr = getDateString(today);
     const nextWeekStr = getDateString(nextWeek);
 
-    // Query 1: 급한 건
+    // ─────────────────────────────────────────────────────────────
+    // Query 1: 급한 건 (날짜 필터 O)
+    // ─────────────────────────────────────────────────────────────
     const urgentQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
       {
@@ -70,6 +64,7 @@ router.get("/", async (req, res) => {
           and: [
             { property: "영업담당", select: { equals: salesRepName } },
             { property: "여권수취여부", select: { does_not_equal: "수취" } },
+            // 날짜 제한은 여기에만 적용됨
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: nextWeekStr } }
           ]
@@ -78,7 +73,9 @@ router.get("/", async (req, res) => {
       { headers: notionHeaders() }
     );
 
+    // ─────────────────────────────────────────────────────────────
     // Query 2: 보관 건 (보관유무 = Status)
+    // ─────────────────────────────────────────────────────────────
     const storageQuery = axios.post(
         `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
         {
@@ -92,17 +89,36 @@ router.get("/", async (req, res) => {
         { headers: notionHeaders() }
       );
 
-    const [urgentRes, storageRes] = await Promise.all([urgentQuery, storageQuery]);
+    // ─────────────────────────────────────────────────────────────
+    // Query 3: 보험 요청 건 (보험가입 = Select)
+    // [수정 완료] 다시 select로 변경, 날짜 필터 없음 확인
+    // ─────────────────────────────────────────────────────────────
+    const insuranceQuery = axios.post(
+        `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
+        {
+          filter: {
+            and: [
+              { property: "영업담당", select: { equals: salesRepName } },
+              { property: "보험가입", select: { equals: "보험요청" } } 
+            ]
+          }
+        },
+        { headers: notionHeaders() }
+      );
+
+    const [urgentRes, storageRes, insuranceRes] = await Promise.all([urgentQuery, storageQuery, insuranceQuery]);
 
     const urgentData = urgentRes.data.results.map(formatNotionPage);
     const storageData = storageRes.data.results.map(formatNotionPage);
+    const insuranceData = insuranceRes.data.results.map(formatNotionPage);
 
     res.json({ 
       ok: true, 
       targetName: salesRepName,
       data: {
         urgent: urgentData,
-        storage: storageData
+        storage: storageData,
+        insurance: insuranceData
       }
     });
 
