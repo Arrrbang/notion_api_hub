@@ -17,10 +17,10 @@ function notionHeaders() {
 
 // 1. [매핑] Ops 사용자 -> '업무담당' 이름
 const OPS_USER_MAPPING = {
-  "admin": "홍길동",   // [요청] admin -> 홍길동 매핑
+  "admin": "지아름",
   "opere": "지아름",
-  "opero": "오퍼O",    // 실제 이름으로 수정 필요
-  "operd": "오퍼D"     // 실제 이름으로 수정 필요
+  "opero": "노해원",
+  "operd": "소다미"
 };
 
 // 2. [날짜 유틸] 영업일 계산 (주말/공휴일 제외)
