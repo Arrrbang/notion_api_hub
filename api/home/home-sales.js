@@ -31,24 +31,22 @@ function formatNotionPage(page) {
   
   const clientName = props["고객명"]?.title?.[0]?.plain_text || "이름 없음";
   
-  // 국가
   const countryRaw = props["국가"]?.select?.name || "";
   const country = countryRaw.match(/[가-힣]+/g)?.join(" ") || countryRaw;
   
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
   
-  // 날짜
+  // 날짜들
   const deadline = (props["서류마감"]?.date?.start || "").split("T")[0];
   const packingDate = (props["포장일"]?.date?.start || "").split("T")[0];
+  
+  // [NEW] ETA 추가
+  const eta = (props["ETA"]?.date?.start || "").split("T")[0];
 
-  // 추가 필드
   const poeRaw = props["POE"]?.select?.name || props["POE"]?.rich_text?.[0]?.plain_text || "";
   const poe = poeRaw.replace(/\[[a-zA-Z]{5}\]\s*/, "");
   
   const salesRep = props["영업담당"]?.select?.name || "";
-  
-  // [NEW] CBM 추가 (숫자 속성)
-  // 값이 없으면 0으로 처리하거나, 빈 문자열 ""로 처리 가능합니다. 여기선 0으로 처리.
   const cbm = props["CBM"]?.number || 0; 
 
   return {
@@ -58,6 +56,7 @@ function formatNotionPage(page) {
     assignees,
     deadline,
     packingDate,
+    eta, // [NEW] 반환 객체에 추가
     poe,
     salesRep,
     cbm
