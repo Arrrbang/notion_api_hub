@@ -17,6 +17,7 @@ const registerGetHistoryListRoutes = require('./account/getHistoryList');
 const registerGetHistoryItemRoutes = require('./account/getHistoryItem');
 const registerDeleteHistoryRoutes = require('./account/deleteHistory');
 const registerHomeRoutes = require('./home/home');
+const registerHomeNoticeRoutes = require('./home/notice');
 
 const app = express();
 app.use(cors());
@@ -92,6 +93,7 @@ registerGetHistoryListRoutes(app);
 registerGetHistoryItemRoutes(app);
 registerDeleteHistoryRoutes(app);
 registerHomeRoutes(app);
+registerHomeNoticeRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
