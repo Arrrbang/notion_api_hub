@@ -32,7 +32,7 @@ function formatNotionPage(page) {
   const countryRaw = props["국가"]?.select?.name || "";
   const country = countryRaw.match(/[가-힣]+/g)?.join(" ") || countryRaw;
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
-  const deadline = props["서류마감"]?.date?.start || "";
+  const deadline = (props["서류마감"]?.date?.start || "").split("T")[0];
 
   return {
     id: page.id,
