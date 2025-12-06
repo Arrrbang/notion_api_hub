@@ -14,34 +14,34 @@ function notionHeaders() {
   };
 }
 
-// 1. 사용자 ID와 노션 '영업담당' 이름 매핑
 const USER_MAPPING = {
   "admin": "정창락",
-  // 필요한 경우 다른 사용자 추가
-  // "user1": "홍길동",
 };
 
-// 2. 날짜 계산 함수
 function getDateString(date) {
   return date.toISOString().split('T')[0];
 }
 
-// 3. 노션 페이지 포맷팅 헬퍼
+// [수정] 노션 데이터 포맷팅 함수 (국가 추가)
 function formatNotionPage(page) {
   const props = page.properties;
   
-  // 고객명 (Title)
+  // 1. 고객명
   const clientName = props["고객명"]?.title?.[0]?.plain_text || "이름 없음";
   
-  // 업무담당 (Person)
+  // 2. [추가] 국가 (선택 속성)
+  const country = props["국가"]?.select?.name || "";
+
+  // 3. 업무담당
   const assignees = props["업무담당"]?.people?.map(p => p.name).join(", ") || "배정 안됨";
   
-  // 서류마감 (Date) - 급한 건에서만 쓰이지만 포맷은 동일하게 가져옴
+  // 4. 서류마감
   const deadline = props["서류마감"]?.date?.start || "";
 
   return {
     id: page.id,
     clientName,
+    country, // 여기에 국가 데이터 추가
     assignees,
     deadline
   };
@@ -50,27 +50,19 @@ function formatNotionPage(page) {
 router.get("/", async (req, res) => {
   try {
     const { username } = req.query;
-
     const salesRepName = USER_MAPPING[username];
 
     if (!salesRepName) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "매칭되는 영업담당자가 없습니다." 
-      });
+      return res.status(400).json({ ok: false, error: "매칭되는 영업담당자가 없습니다." });
     }
 
-    // 날짜 준비
     const today = new Date();
     const nextWeek = new Date();
     nextWeek.setDate(today.getDate() + 7);
-
     const todayStr = getDateString(today);
     const nextWeekStr = getDateString(nextWeek);
 
-    // ─────────────────────────────────────────────────────────────
-    // Query 1: 급한 건 (영업담당, 여권수취, 서류마감)
-    // ─────────────────────────────────────────────────────────────
+    // Query 1: 급한 건
     const urgentQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
       {
@@ -86,30 +78,22 @@ router.get("/", async (req, res) => {
       { headers: notionHeaders() }
     );
 
-    // ─────────────────────────────────────────────────────────────
-    // Query 2: 보관 건 (영업담당, 보관유무)
-    // [수정 완료] 보관유무는 Status 속성이므로 select 대신 status 사용
-    // ─────────────────────────────────────────────────────────────
+    // Query 2: 보관 건 (보관유무 = Status)
     const storageQuery = axios.post(
         `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
         {
           filter: {
             and: [
               { property: "영업담당", select: { equals: salesRepName } },
-              { 
-                property: "보관유무", 
-                status: { equals: "보관" }  // <--- 여기가 수정된 핵심 포인트입니다!
-              } 
+              { property: "보관유무", status: { equals: "보관" } } 
             ]
           }
         },
         { headers: notionHeaders() }
       );
 
-    // 두 요청 병렬 실행
     const [urgentRes, storageRes] = await Promise.all([urgentQuery, storageQuery]);
 
-    // 데이터 정제
     const urgentData = urgentRes.data.results.map(formatNotionPage);
     const storageData = storageRes.data.results.map(formatNotionPage);
 
@@ -124,8 +108,6 @@ router.get("/", async (req, res) => {
 
   } catch (error) {
     console.error("Notion API Error:", error.response?.data || error.message);
-    
-    // 에러 발생 시 상세 내용을 프론트엔드로 전달
     res.status(500).json({ 
       ok: false, 
       error: "서버 내부 오류가 발생했습니다.", 
