@@ -16,7 +16,7 @@ const registerSaveHistoryRoutes = require('./account/saveHistory');
 const registerGetHistoryListRoutes = require('./account/getHistoryList');
 const registerGetHistoryItemRoutes = require('./account/getHistoryItem');
 const registerDeleteHistoryRoutes = require('./account/deleteHistory');
-const registerHomeRoutes = require('./home/home');
+const registerSalesHomeRoutes = require('./home/home');
 const registerHomeNoticeRoutes = require('./home/notice');
 
 const app = express();
@@ -92,7 +92,7 @@ registerSaveHistoryRoutes(app);
 registerGetHistoryListRoutes(app);
 registerGetHistoryItemRoutes(app);
 registerDeleteHistoryRoutes(app);
-registerHomeRoutes(app);
+registerSalesHomeRoutes(app);
 registerHomeNoticeRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
