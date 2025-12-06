@@ -17,7 +17,8 @@ function notionHeaders() {
 // 1. 사용자 ID와 노션 '영업담당' 이름 매핑
 const USER_MAPPING = {
   "admin": "정창락",
-  // 추후 다른 사용자 추가 가능
+  // 필요한 경우 다른 사용자 추가
+  // "test": "홍길동",
 };
 
 // 2. 날짜 계산 함수
@@ -25,7 +26,7 @@ function getDateString(date) {
   return date.toISOString().split('T')[0];
 }
 
-// 3. 노션 페이지 데이터를 우리가 필요한 객체로 변환하는 헬퍼 함수
+// 3. 노션 페이지 포맷팅 헬퍼 함수
 function formatNotionPage(page) {
   const props = page.properties;
   
@@ -69,10 +70,11 @@ router.get("/", async (req, res) => {
     const nextWeekStr = getDateString(nextWeek);
 
     // ─────────────────────────────────────────────────────────────
-    // [수정] 두 가지 쿼리를 병렬로 실행 (Promise.all)
+    // 두 가지 쿼리를 병렬로 실행 (Promise.all)
     // ─────────────────────────────────────────────────────────────
     
-    // Query 1: 급한 건 (기존 로직)
+    // Query 1: 급한 건
+    // 조건: 영업담당==본인 AND 여권수취!=수취 AND 오늘<=서류마감<=1주일
     const urgentQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
       {
@@ -88,8 +90,8 @@ router.get("/", async (req, res) => {
       { headers: notionHeaders() }
     );
 
-    // Query 2: 보관 중인 건 (신규 로직)
-    // 조건: 영업담당 == 본인 AND 보관유무 == "보관"
+    // Query 2: 보관 중인 건
+    // 조건: 영업담당==본인 AND 보관유무=="보관"
     const storageQuery = axios.post(
         `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
         {
@@ -121,8 +123,15 @@ router.get("/", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Notion API Error:", error.response?.data || error.message);
-    res.status(500).json({ ok: false, error: "데이터를 불러오는 중 오류가 발생했습니다." });
+    // 에러 발생 시 로그 출력
+    console.error("Notion API Error Details:", error.response?.data || error.message);
+    
+    // 클라이언트에게 에러 내용 전달
+    res.status(500).json({ 
+      ok: false, 
+      error: "데이터를 불러오는 중 오류가 발생했습니다.",
+      details: error.message 
+    });
   }
 });
 
