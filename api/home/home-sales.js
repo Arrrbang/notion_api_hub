@@ -96,6 +96,10 @@ router.get("/", async (req, res) => {
           ]
         }
       },
+        sorts: [
+          { property: "서류마감", direction: "ascending" } 
+        ]
+      },
       { headers }
     );
 
@@ -112,6 +116,10 @@ router.get("/", async (req, res) => {
           ]
         }
       },
+        sorts: [
+          { property: "포장일", direction: "ascending" } 
+        ]
+      },
       { headers }
     );
 
@@ -127,6 +135,10 @@ router.get("/", async (req, res) => {
             { property: "보험가입", select: { equals: "보험요청" } } 
           ]
         }
+      },
+        sorts: [
+          { property: "ETA", direction: "ascending" } 
+        ]
       },
       { headers }
     );
