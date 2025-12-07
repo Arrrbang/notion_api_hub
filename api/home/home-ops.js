@@ -150,6 +150,13 @@ router.get("/", async (req, res) => {
           ]
         }
       },
+        sorts: [
+          {
+            property: "서류마감",
+            direction: "ascending" 
+          }
+        ]
+      },
       { headers: notionHeaders() }
     );
 
@@ -162,6 +169,13 @@ router.get("/", async (req, res) => {
             { property: "서류마감", date: { on_or_before: targetDateStr } }
           ]
         }
+      },
+      sorts: [
+          {
+            property: "서류마감",
+            direction: "ascending" 
+          }
+        ]
       },
       { headers: notionHeaders() }
     );
