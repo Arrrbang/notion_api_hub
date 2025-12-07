@@ -141,42 +141,40 @@ router.get("/", async (req, res) => {
     // 쿼리 실행 (병렬)
     const passportQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
-      {
+      { // ✅ 쿼리 본문 시작
         filter: {
           and: [
             { property: "여권수취여부", select: { does_not_equal: "수취" } },
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: nextWeekStr } }
           ]
-        }
-      },
-        sorts: [
+        },
+        sorts: [ // ✅ sorts를 filter와 같은 레벨에 통합
           {
             property: "서류마감",
             direction: "ascending" 
           }
         ]
-      },
+      }, // ✅ 쿼리 본문 끝
       { headers: notionHeaders() }
     );
 
     const deadlineQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
-      {
+      { // ✅ 쿼리 본문 시작
         filter: {
           and: [
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: targetDateStr } }
           ]
-        }
-      },
-      sorts: [
+        },
+        sorts: [ // ✅ sorts를 filter와 같은 레벨에 통합
           {
             property: "서류마감",
             direction: "ascending" 
           }
         ]
-      },
+      }, // ✅ 쿼리 본문 끝
       { headers: notionHeaders() }
     );
 
