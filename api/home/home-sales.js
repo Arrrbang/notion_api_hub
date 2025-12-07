@@ -86,7 +86,7 @@ router.get("/", async (req, res) => {
     // ─────────────────────────────────────────────────────────────
     const urgentQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
-      {
+      { // ✅ JSON 객체 시작
         filter: {
           and: [
             { property: "영업담당", select: { equals: salesRepName } },
@@ -94,12 +94,11 @@ router.get("/", async (req, res) => {
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: nextWeekStr } }
           ]
-        }
-      },
-        sorts: [
+        },
+        sorts: [ // ✅ 필터와 정렬을 같은 객체에 통합
           { property: "서류마감", direction: "ascending" } 
         ]
-      },
+      }, // ✅ JSON 객체 끝
       { headers }
     );
 
@@ -108,18 +107,17 @@ router.get("/", async (req, res) => {
     // ─────────────────────────────────────────────────────────────
     const storageQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
-      {
+      { // ✅ JSON 객체 시작
         filter: {
           and: [
             { property: "영업담당", select: { equals: salesRepName } },
             { property: "보관유무", status: { equals: "보관" } } 
           ]
-        }
-      },
-        sorts: [
+        },
+        sorts: [ // ✅ 필터와 정렬을 같은 객체에 통합
           { property: "포장일", direction: "ascending" } 
         ]
-      },
+      }, // ✅ JSON 객체 끝
       { headers }
     );
 
@@ -128,18 +126,17 @@ router.get("/", async (req, res) => {
     // ─────────────────────────────────────────────────────────────
     const insuranceQuery = axios.post(
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
-      {
+      { // ✅ JSON 객체 시작
         filter: {
           and: [
             { property: "영업담당", select: { equals: salesRepName } },
             { property: "보험가입", select: { equals: "보험요청" } } 
           ]
-        }
-      },
-        sorts: [
+        },
+        sorts: [ // ✅ 필터와 정렬을 같은 객체에 통합
           { property: "ETA", direction: "ascending" } 
         ]
-      },
+      }, // ✅ JSON 객체 끝
       { headers }
     );
 
