@@ -501,15 +501,20 @@ function computeAmount(props, type, cbm, selectedRegion) {
   // 3-2) 계산식 사용 여부:
   //  - 기본 금액이 없는 경우 (이전과 동일)
   //  - 또는 계산식 안에 REGION / DEFAULT 가 들어있는 경우(지역/기본금액 조건식)
-  const shouldUseFormula =
+const shouldUseFormula =
     rawFormula &&
-    (!hasBaseCost || /REGION\b|DEFAULT\b/i.test(rawFormula));
+    (!hasBaseCost || /REGION\b|DEFAULT\b|TYPE\b/i.test(rawFormula)); // [수정] TYPE 키워드도 감지하도록 추가
 
   if (shouldUseFormula) {
     const regionStr = selectedRegion || '';
-    const code = applyRegionFormula(rawFormula, regionStr, baseAmount, cbm);
+    
+    // 1. 기존: 지역(REGION) 및 DEFAULT 처리
+    let code = applyRegionFormula(rawFormula, regionStr, baseAmount, cbm);
 
-    // 1순위: 범위식
+    // 2. [추가] 타입(TYPE) 조건 처리
+    code = applyTypeFormula(code, type); 
+
+    // 1순위: 범위식 평가
     let v = evalRangeFormula(code, cbm);
     if (!Number.isFinite(v)) {
       // 2순위: 일반 수학식
