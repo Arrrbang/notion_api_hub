@@ -428,31 +428,79 @@ function applyRegionFormula(code, selectedRegion, baseAmount, cbm) {
   return expr;
 }
 
+// ─────────────────────────────────────────────────────────────
+// [수정됨] TYPE 조건 처리 함수 (괄호 카운팅 방식)
+// 정규식 대신 괄호 짝을 맞춰 파싱하므로 (CBM * 15) 같은 중첩 괄호도 안전하게 처리됨
+// ─────────────────────────────────────────────────────────────
 function applyTypeFormula(code, currentType) {
   if (!code) return code;
   let expr = String(code);
-  
-  // 비교를 위해 대문자로 통일 (20FT, 40HC, CONSOLE)
   const typeVal = (currentType || '').toUpperCase();
 
-  // IF(TYPE="타입", 참값, 거짓값) 패턴 찾기
-  // 따옴표는 " 와 ' 모두 허용
-  const ifRegex = /IF\(\s*TYPE\s*=\s*("([^"]*)"|'([^']*)')\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/gi;
+  // 반복적으로 IF(TYPE="...", A, B) 구조를 찾아서 해결
+  while (true) {
+    // 1. "IF(TYPE=" 패턴 찾기 (따옴표는 ' 또는 " 허용)
+    const match = expr.match(/IF\(\s*TYPE\s*=\s*(?:'([^']*)'|"([^"]*)")\s*,/i);
+    
+    // 더 이상 IF문이 없으면 종료
+    if (!match) break;
 
-  // 중첩된 IF문도 처리하기 위해 루프 사용
-  let changed = true;
-  while (changed) {
-    changed = false;
-    expr = expr.replace(ifRegex, function (match, quoted, dbl, sgl, thenPart, elsePart) {
-      changed = true;
-      const target = (dbl || sgl || '').trim().toUpperCase();
+    const startIndex = match.index;      // "IF(" 시작 위치
+    const matchedStr = match[0];         // "IF(TYPE='20FT'," 까지의 문자열
+    const targetType = (match[1] || match[2] || '').toUpperCase(); // "20FT" 추출
+
+    // 2. 내용 파싱: 괄호 짝을 맞춰서 [THEN 부분] 과 [ELSE 부분]을 분리
+    let depth = 0;       // 괄호 깊이
+    let splitIndex = -1; // 쉼표(,) 위치
+    let endIndex = -1;   // IF문의 끝 닫는 괄호 ')' 위치
+    
+    const scanStart = startIndex + matchedStr.length; // 쉼표 바로 뒤부터 스캔 시작
+    
+    for (let i = scanStart; i < expr.length; i++) {
+      const char = expr[i];
       
-      // 현재 타입과 수식에 적힌 타입이 같은지 확인
-      const cond = (typeVal === target);
-      
-      // 조건에 따라 값 선택 (괄호로 감싸서 안전하게 계산)
-      return cond ? '(' + thenPart.trim() + ')' : '(' + elsePart.trim() + ')';
-    });
+      if (char === '(') {
+        depth++; // 깊이 증가
+      } else if (char === ')') {
+        if (depth === 0) {
+          endIndex = i; // 깊이가 0일 때 닫는 괄호가 나오면 IF문 종료
+          break; 
+        }
+        depth--; // 깊이 감소
+      } else if (char === ',' && depth === 0) {
+        // 괄호 안에 있지 않은 최상위 쉼표만 THEN/ELSE 구분자로 인식
+        if (splitIndex === -1) splitIndex = i;
+      }
+    }
+
+    if (endIndex === -1) {
+      // 닫는 괄호를 못 찾음 (수식 오류) -> 무한루프 방지 위해 break
+      console.warn("Formula Error: IF statement missing closing parenthesis");
+      break; 
+    }
+
+    // 3. THEN / ELSE 텍스트 추출
+    let thenPart = '';
+    let elsePart = '';
+
+    if (splitIndex !== -1) {
+      // 쉼표가 있으면: 쉼표 앞이 THEN, 뒤가 ELSE
+      thenPart = expr.substring(scanStart, splitIndex);
+      elsePart = expr.substring(splitIndex + 1, endIndex);
+    } else {
+      // 쉼표가 없으면: 전체가 THEN (ELSE 없음)
+      thenPart = expr.substring(scanStart, endIndex);
+      elsePart = ''; 
+    }
+
+    // 4. 조건 비교 후 값 선택
+    // 괄호를 씌워주는 이유: 수식 우선순위 보존 (A - B)
+    const replacement = (typeVal === targetType) 
+      ? `(${thenPart})` 
+      : `(${elsePart})`;
+
+    // 5. 원본 문자열에서 IF(...) 전체를 결과값으로 교체
+    expr = expr.substring(0, startIndex) + replacement + expr.substring(endIndex + 1);
   }
 
   return expr;
