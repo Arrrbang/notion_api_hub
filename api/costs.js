@@ -428,6 +428,36 @@ function applyRegionFormula(code, selectedRegion, baseAmount, cbm) {
   return expr;
 }
 
+function applyTypeFormula(code, currentType) {
+  if (!code) return code;
+  let expr = String(code);
+  
+  // 비교를 위해 대문자로 통일 (20FT, 40HC, CONSOLE)
+  const typeVal = (currentType || '').toUpperCase();
+
+  // IF(TYPE="타입", 참값, 거짓값) 패턴 찾기
+  // 따옴표는 " 와 ' 모두 허용
+  const ifRegex = /IF\(\s*TYPE\s*=\s*("([^"]*)"|'([^']*)')\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/gi;
+
+  // 중첩된 IF문도 처리하기 위해 루프 사용
+  let changed = true;
+  while (changed) {
+    changed = false;
+    expr = expr.replace(ifRegex, function (match, quoted, dbl, sgl, thenPart, elsePart) {
+      changed = true;
+      const target = (dbl || sgl || '').trim().toUpperCase();
+      
+      // 현재 타입과 수식에 적힌 타입이 같은지 확인
+      const cond = (typeVal === target);
+      
+      // 조건에 따라 값 선택 (괄호로 감싸서 안전하게 계산)
+      return cond ? '(' + thenPart.trim() + ')' : '(' + elsePart.trim() + ')';
+    });
+  }
+
+  return expr;
+}
+
 // 공통 금액 계산 로직
 function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
