@@ -8,6 +8,7 @@ const axios   = require("axios");
 const registerDestinationRoutes = require("./destination");
 const registerOutboundSosRoutes = require("./sos/outbound");
 const registerInboundSosRoutes  = require("./sos/inbound");
+const registerSosNoticeRoutes   = require("./sos/notice");
 const registerCostsRoutes       = require('./costs');
 const registerYesg2mRoutes      = require('./ExternalPackagingCosts/yesg2m');
 const registerHansolRoutes      = require('./ExternalPackagingCosts/hansol');
@@ -85,6 +86,7 @@ app.get(["/", "/api/health"], async (req, res) => {
 
 registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
+registerSosNoticeRoutes(app);
 registerDestinationRoutes(app);
 registerCostsRoutes(app);  
 registerYesg2mRoutes(app);
