@@ -308,18 +308,26 @@ function evalFormula(code, context) {
   let expr = String(code).trim();
   if (!expr) return undefined;
 
-  // 허용 문자: 숫자, 공백, + - * / . ( ) 그리고 CBM/cbm
-  const safe = /^[0-9+\-*/().\sCBMcbm]+$/;
+  // 1. MAX(...) 구문을 자바스크립트 Math.max(...)로 변환
+  // 예: MAX(CBM * 30, 200) -> Math.max(CBM * 30, 200)
+  expr = expr.replace(/MAX\s*\(/gi, 'Math.max(');
+
+  // 2. 허용 문자 확장
+  // 기존: 숫자, 연산자, CBM
+  // 수정: 쉼표(,)와 Math.max 처리에 필요한 문자(M,a,t,h,x)를 정규식에 추가
+  const safe = /^[0-9+\-*/().\sCBMcbm,Mathx]+$/;
+  
   if (!safe.test(expr)) {
-    return undefined; // 허용 안 하는 문자가 있으면 그냥 무시
+    // 허용되지 않은 문자가 있으면 실행하지 않음 (보안)
+    return undefined;
   }
 
-  // CBM 변수를 실제 숫자로 치환
+  // CBM 변수를 실제 입력된 숫자로 치환
   const cbmVal = Number(context?.cbm ?? 0);
   expr = expr.replace(/CBM/gi, String(cbmVal));
 
   try {
-    // 최소한으로 감싼 eval
+    // 수식 계산
     const fn = new Function('"use strict"; return (' + expr + ');');
     const val = fn();
     return Number.isFinite(val) ? val : undefined;
