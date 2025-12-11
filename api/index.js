@@ -6,8 +6,8 @@ const cors    = require("cors");
 const axios   = require("axios");
 
 const registerDestinationRoutes = require("./destination");
-const registerOutboundSosRoutes = require("./outboundsos");
-const registerInboundSosRoutes  = require("./inboundsos");
+const registerOutboundSosRoutes = require("./sos/outbound");
+const registerInboundSosRoutes  = require("./sos/inbound");
 const registerCostsRoutes       = require('./costs');
 const registerYesg2mRoutes      = require('./ExternalPackagingCosts/yesg2m');
 const registerHansolRoutes      = require('./ExternalPackagingCosts/hansol');
