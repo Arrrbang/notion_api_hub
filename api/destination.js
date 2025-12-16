@@ -217,10 +217,7 @@ function registerDestinationRoutes(app) {
   });
 
 
-  // 1) 지역 → 업체
-  // - REGION_PROP: multi_select
-  // - 선택된 region 값이 multi_select에 포함된 행들만 사용
-  // - 그 행들의 업체(COMPANY_PROP: select) 이름을 모아서 중복 제거 후 정렬
+// 1) 지역 → 업체 (최적화 버전: Notion Native Filter 적용)
   app.get("/api/companies/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -244,33 +241,26 @@ function registerDestinationRoutes(app) {
         });
       }
   
-      // 🔹 모든 DB의 모든 페이지를 다 읽어온다 (queryAllDatabases는 이미 페이징 지원 버전이어야 함)
+      // ✅ 핵심 수정: Notion API 필터 사용 (서버 부하 감소 & 속도 향상)
       const body = {
-        page_size: 100,
-        // 여기서는 REGION 필터를 Notion에 안 걸고, 서버에서 직접 필터링
-        // (multi_select 타입/이름 문제를 피하고, 로직을 우리가 완전히 컨트롤하기 위함)
+        filter: {
+          property: REGION_PROP, // 환경변수 또는 "지역"
+          multi_select: {
+            contains: region // 해당 지역을 포함하는 행만 가져옴
+          }
+        },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }],
       };
   
+      // 필터링된 소량의 데이터만 가져옴
       const pages = await queryAllDatabases(dbids, body);
   
       const companySet = new Set();
   
       for (const page of pages) {
         const props = page.properties || {};
-  
-        // REGION_PROP: multi_select
-        const regionCol = props[REGION_PROP];
-        if (!regionCol || regionCol.type !== "multi_select") {
-          // 지역이 비어있거나 타입이 다르면 이번 행은 스킵
-          continue;
-        }
-  
-        const items = regionCol.multi_select || [];
-        const hasRegion = items.some(opt => opt && opt.name === region);
-        if (!hasRegion) continue;
-  
-        // 업체(단일 선택) 값 추출
+        
+        // 이미 노션에서 지역 필터링을 했으므로, 바로 업체명만 추출하면 됨
         const companyName = getSelectName(props, COMPANY_PROP);
         if (companyName) {
           companySet.add(companyName);
@@ -287,7 +277,7 @@ function registerDestinationRoutes(app) {
         country,
         region,
         companies,
-        options: companies,   // 프론트에서 j.options로도 쓸 수 있게
+        options: companies,
         dbCount: dbids.length,
       });
     } catch (e) {
@@ -300,13 +290,7 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  // ────────────────────────────────
-  // 3) 업체 + 지역 → POE
-  // ────────────────────────────────
-  // 3) 업체 + 지역 → POE
-  // - REGION_PROP: multi_select
-  // - COMPANY_PROP: select
-  // - (region + company) 가 모두 일치하는 행들의 POE(multi_select) 값만 사용
+// 3) 업체 + 지역 → POE (최적화 버전: AND 필터 적용)
   app.get("/api/poe/by-company", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -315,19 +299,30 @@ function registerDestinationRoutes(app) {
   
       if (!country || !region || !company) {
         return res.status(400).json({
-          ok:false,
-          error:"country, region, company are required"
+          ok: false,
+          error: "country, region, company are required"
         });
       }
   
       const dbids = getCountryDbIds(country);
       if (dbids.length === 0) {
-        return res.json({ ok:true, country, region, company, poes: [], options: [] });
+        return res.json({ ok: true, country, region, company, poes: [], options: [] });
       }
   
+      // ✅ 핵심 수정: 지역 AND 업체 필터 동시 적용
       const body = {
-        page_size: 100,
-        // 여기서도 Notion 필터는 안 쓰고, 전체를 읽은 다음 JS에서 필터링
+        filter: {
+          and: [
+            {
+              property: REGION_PROP,
+              multi_select: { contains: region }
+            },
+            {
+              property: COMPANY_PROP,
+              select: { equals: company }
+            }
+          ]
+        },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }]
       };
   
@@ -336,19 +331,7 @@ function registerDestinationRoutes(app) {
   
       for (const page of pages) {
         const props = page.properties || {};
-  
-        // REGION 체크 (multi_select 안에 선택 region 이 포함되어야 함)
-        const regionCol = props[REGION_PROP];
-        if (!regionCol || regionCol.type !== "multi_select") continue;
-        const regions = regionCol.multi_select || [];
-        const hasRegion = regions.some(opt => opt && opt.name === region);
-        if (!hasRegion) continue;
-  
-        // COMPANY 체크 (select 값이 선택 company 와 같아야 함)
-        const companyName = getSelectName(props, COMPANY_PROP);
-        if (!companyName || companyName !== company) continue;
-  
-        // 조건 통과한 행의 POE multi_select 값 수집
+        // 필터링된 데이터에서 POE 값만 추출
         const poeNames = getMultiSelectNames(props, POE_PROP);
         poeNames.forEach(name => poeSet.add(name));
       }
@@ -378,14 +361,7 @@ function registerDestinationRoutes(app) {
   });
 
 
-  // ────────────────────────────────
-  // 4) 업체 (+선택지역+POE) → 화물타입
-  // ────────────────────────────────
-  // 4) 지역 + 업체 + POE → 화물타입
-  // - REGION_PROP: multi_select
-  // - COMPANY_PROP: select
-  // - POE_PROP: multi_select
-  // - DIPLO_PROP: multi_select (화물타입)
+// 4) 지역 + 업체 + POE → 화물타입 (최적화 버전: 3중 AND 필터)
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
@@ -413,9 +389,15 @@ function registerDestinationRoutes(app) {
         });
       }
   
-      // 🔹 전체 페이지 읽기 (pagination 지원하는 queryAllDatabases 사용)
+      // ✅ 핵심 수정: 3가지 조건(Region, Company, POE) 모두 필터링
       const body = {
-        page_size: 100,
+        filter: {
+          and: [
+            { property: REGION_PROP, multi_select: { contains: region } },
+            { property: COMPANY_PROP, select: { equals: company } },
+            { property: POE_PROP, multi_select: { contains: poe } }
+          ]
+        },
         sorts: [{ property: ORDER_PROP, direction: "ascending" }],
       };
   
@@ -424,26 +406,7 @@ function registerDestinationRoutes(app) {
   
       for (const page of pages) {
         const props = page.properties || {};
-  
-        // 1) REGION 일치 (multi_select 안에 선택된 region 포함)
-        const regionCol = props[REGION_PROP];
-        if (!regionCol || regionCol.type !== "multi_select") continue;
-        const regions = regionCol.multi_select || [];
-        const hasRegion = regions.some((opt) => opt && opt.name === region);
-        if (!hasRegion) continue;
-  
-        // 2) COMPANY 일치 (select)
-        const companyName = getSelectName(props, COMPANY_PROP);
-        if (!companyName || companyName !== company) continue;
-  
-        // 3) POE 일치 (multi_select 안에 선택된 poe 포함)
-        const poeCol = props[POE_PROP];
-        if (!poeCol || poeCol.type !== "multi_select") continue;
-        const poeItems = poeCol.multi_select || [];
-        const hasPOE = poeItems.some((opt) => opt && opt.name === poe);
-        if (!hasPOE) continue;
-  
-        // 4) 조건 통과한 행의 화물타입(DIPLO_PROP: multi_select) 값 수집
+        // 조건에 맞는 데이터의 화물타입만 추출
         const typeNames = getMultiSelectNames(props, DIPLO_PROP);
         typeNames.forEach((name) => typeSet.add(name));
       }
@@ -460,7 +423,7 @@ function registerDestinationRoutes(app) {
         company,
         poe,
         types,
-        options: types, // 프론트에서 j.options 로도 쓸 수 있게
+        options: types,
         dbCount: dbids.length,
       });
     } catch (e) {
@@ -475,8 +438,6 @@ function registerDestinationRoutes(app) {
       });
     }
   });
-
-
 }
 
 module.exports = registerDestinationRoutes;
