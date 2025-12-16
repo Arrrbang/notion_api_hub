@@ -307,11 +307,8 @@ function evalFormula(code, context) {
   if (!code) return undefined;
   let expr = String(code).trim();
 
-  // 1. 보안 검사 (허용 문자 목록 확장)
-  // 기존: 숫자, 연산자, CBM
-  // 추가: MAX, MIN, 쉼표(,) 
-  // (이 정규식에 걸리면 아예 실행하지 않으므로 보안 유지됨)
-  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,]+$/i;
+  // ★ 수정됨: 숫자, 연산자 외에 < > = ? : 기호 허용 (조건문용)
+  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,<>?=:]+$/i;
 
   if (!safe.test(expr)) {
     // console.warn('차단된 수식:', expr); // 디버깅용
@@ -320,15 +317,15 @@ function evalFormula(code, context) {
 
   const cbmVal = Number(context?.cbm ?? 0);
 
-  // 2. CBM 값 치환 (대소문자 무시)
+  // 1. CBM 값 치환
   expr = expr.replace(/CBM/gi, String(cbmVal));
 
-  // 3. 엑셀식 함수(MAX, MIN)를 자바스크립트 함수(Math.max, Math.min)로 변환
+  // 2. 엑셀식함수 -> 자바스크립트 함수 변환
   expr = expr.replace(/MAX/gi, 'Math.max');
   expr = expr.replace(/MIN/gi, 'Math.min');
 
   try {
-    // 4. 수식 계산 실행
+    // 3. 계산 실행
     const fn = new Function('"use strict"; return (' + expr + ');');
     const val = fn();
     return Number.isFinite(val) ? val : undefined;
@@ -341,68 +338,58 @@ function evalFormula(code, context) {
 function evalRangeFormula(code, cbm) {
   if (!code) return undefined;
 
-  const lines = code.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  // ★ 수정됨: 줄바꿈(\n) 뿐만 아니라 쉼표(,)로도 문장을 나눕니다.
+  const lines = code.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
 
   for (const line of lines) {
-    // 패턴 1: "1 ≤ CBM ≤ 10 = 200"
-    let m = line.match(/^(\d+)\s*[<≤]\s*CBM\s*[<≤]\s*(\d+)\s*=\s*(\d+)/i);
+    // 패턴 1: "1 <= CBM <= 10 = 200"
+    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      const low  = Number(m[1]);
-      const high = Number(m[2]);
-      const val  = Number(m[3]);
-      if (cbm >= low && cbm <= high) return val;
+      const min = Number(m[1]);
+      const max = Number(m[2]);
+      const val = Number(m[3]);
+      if (cbm >= min && cbm <= max) return val;
       continue;
     }
 
-    // 패턴 2: "CBM > 20 = 400"
-    m = line.match(/^CBM\s*([<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
+    // 패턴 2: "CBM <= 20 = 400" (단일 조건)
+    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      const op  = m[1];
+      const op = m[1];
       const num = Number(m[2]);
       const val = Number(m[3]);
-
-      if (
-        (op === '<'  && cbm <  num) ||
-        (op === '>'  && cbm >  num) ||
-        (op === '<=' && cbm <= num) ||
-        (op === '>=' && cbm >= num)
-      ) return val;
-
+      
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+      
+      if (match) return val;
       continue;
     }
 
-    // 패턴 3: "0 < CBM < 11 = 200"
-    m = line.match(/^(\d+)\s*<\s*CBM\s*<\s*(\d+)\s*=\s*(\d+)/i);
+    // 패턴 3: "IF CBM <= 20 THEN 400"
+    m = line.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
     if (m) {
-      const low  = Number(m[1]);
-      const high = Number(m[2]);
-      const val  = Number(m[3]);
-      if (cbm > low && cbm < high) return val;
-      continue;
-    }
-
-    // 패턴 4: "IF CBM < 11 THEN 200"
-    m = line.match(/^IF\s+CBM\s*([<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
-    if (m) {
-      const op  = m[1];
+      const op = m[1];
       const num = Number(m[2]);
       const val = Number(m[3]);
+      
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
 
-      if (
-        (op === '<'  && cbm <  num) ||
-        (op === '>'  && cbm >  num) ||
-        (op === '<=' && cbm <= num) ||
-        (op === '>=' && cbm >= num)
-      ) return val;
-
+      if (match) return val;
       continue;
     }
 
-    // 패턴 5: "ELSE 300"
+    // 패턴 4: "ELSE 500"
     m = line.match(/^ELSE\s+(\d+)/i);
     if (m) return Number(m[1]);
   }
-
   return undefined;
 }
 
