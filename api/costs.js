@@ -306,28 +306,29 @@ function getFormulaText(props, key) {
 function evalFormula(code, context) {
   if (!code) return undefined;
   let expr = String(code).trim();
-  if (!expr) return undefined;
 
-  // 1. MAX(...) 구문을 자바스크립트 Math.max(...)로 변환
-  // 예: MAX(CBM * 30, 200) -> Math.max(CBM * 30, 200)
-  expr = expr.replace(/MAX\s*\(/gi, 'Math.max(');
-
-  // 2. 허용 문자 확장
+  // 1. 보안 검사 (허용 문자 목록 확장)
   // 기존: 숫자, 연산자, CBM
-  // 수정: 쉼표(,)와 Math.max 처리에 필요한 문자(M,a,t,h,x)를 정규식에 추가
-  const safe = /^[0-9+\-*/().\sCBMcbm,Mathx]+$/;
-  
+  // 추가: MAX, MIN, 쉼표(,) 
+  // (이 정규식에 걸리면 아예 실행하지 않으므로 보안 유지됨)
+  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,]+$/i;
+
   if (!safe.test(expr)) {
-    // 허용되지 않은 문자가 있으면 실행하지 않음 (보안)
+    // console.warn('차단된 수식:', expr); // 디버깅용
     return undefined;
   }
 
-  // CBM 변수를 실제 입력된 숫자로 치환
   const cbmVal = Number(context?.cbm ?? 0);
+
+  // 2. CBM 값 치환 (대소문자 무시)
   expr = expr.replace(/CBM/gi, String(cbmVal));
 
+  // 3. 엑셀식 함수(MAX, MIN)를 자바스크립트 함수(Math.max, Math.min)로 변환
+  expr = expr.replace(/MAX/gi, 'Math.max');
+  expr = expr.replace(/MIN/gi, 'Math.min');
+
   try {
-    // 수식 계산
+    // 4. 수식 계산 실행
     const fn = new Function('"use strict"; return (' + expr + ');');
     const val = fn();
     return Number.isFinite(val) ? val : undefined;
