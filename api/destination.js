@@ -593,16 +593,17 @@ function registerCostsRoutes(app) {
    * GET /api/costs/:country
    *
    * 쿼리:
-   *  - region   : 지역(선택)
-   *  - company  : 업체(단일선택)
-   *  - poe      : POE(다중선택 중 하나)
-   *  - roles    : 화물타입(대문자로, 콤마구분) 예: roles=DIPLOMAT,NON-DIPLO
-   *  - type     : "20FT" | "40HC" | "CONSOLE"
-   *  - cbm      : 숫자 (CONSOLE/계산식에 사용)
-   *  - mode=data: 원본 Notion rows 그대로 반환
+   * - region   : 지역(선택) -> ★ 값이 있으면 Notion API 레벨에서 필터링 (속도 최적화 핵심)
+   * - company  : 업체(단일선택)
+   * - poe      : POE(다중선택 중 하나)
+   * - roles    : 화물타입(대문자로, 콤마구분) 예: roles=DIPLOMAT,NON-DIPLO
+   * - type     : "20FT" | "40HC" | "CONSOLE"
+   * - cbm      : 숫자 (CONSOLE/계산식에 사용)
+   * - mode=data: 원본 Notion rows 그대로 반환
    */
   app.get('/api/costs/:country', async (req, res) => {
     try {
+      // 1. URL 파라미터에서 국가명("미국")을 가져옵니다.
       const country = (req.params.country || '').trim();
       if (!country) {
         return res.status(400).json({ ok:false, error:'country is required' });
@@ -610,6 +611,7 @@ function registerCostsRoutes(app) {
 
       const mode = (req.query.mode || '').trim();
 
+      // 2. 쿼리 스트링에서 지역명("Stanton CA" 등)을 가져옵니다.
       const region  = (req.query.region  || '').trim();
       const company = (req.query.company || '').trim();
       const poe     = (req.query.poe     || '').trim();
@@ -626,6 +628,7 @@ function registerCostsRoutes(app) {
         ? rolesParam.split(',').map(s => s.trim()).filter(Boolean)
         : [];
 
+      // 3. db-map.json에서 "미국"에 해당하는 DB ID들을 가져옵니다.
       const dbIds = getCountryDbIds(country);
       if (!dbIds.length) {
         return res.json({
@@ -645,13 +648,26 @@ function registerCostsRoutes(app) {
         });
       }
 
-      // 공통 body (정렬만)
+      // ─────────────────────────────────────────────────────────────
+      // [속도 최적화 적용] Notion API 요청 Body 설정
+      // ─────────────────────────────────────────────────────────────
       const body = {
         page_size: 100,
         sorts: [{ property: ORDER_PROP, direction: 'ascending' }],
       };
 
-      // Notion에서 전체 페이지 읽기
+      // ★ 핵심: 프론트에서 region을 보내주면, Notion API에게 "이 지역 데이터만 달라"고 요청합니다.
+      // 이렇게 하면 수백/수천 개의 전체 데이터를 로딩하지 않아도 되어 속도가 비약적으로 빨라집니다.
+      if (region) {
+        body.filter = {
+          property: REGION_PROP, // 환경변수 혹은 기본값 '지역'
+          multi_select: {
+            contains: region     // 예: "Stanton CA"가 포함된 행만 검색
+          }
+        };
+      }
+
+      // Notion에서 페이지 읽기 (필터가 적용된 body로 요청)
       const pages = await queryAllDatabases(dbIds, body);
 
       // mode=data 인 경우: 원본 그대로 돌려주기
@@ -678,6 +694,7 @@ function registerCostsRoutes(app) {
         const order       = getNumberFromProp(props[ORDER_PROP]) ?? getOrderNumber(page);
 
         // 지역/업체/POE/화물타입 필터
+        // (API단에서 필터링을 했더라도, 확실한 검증을 위해 코드 레벨에서도 한 번 더 체크합니다)
         if (!isRegionMatch(regionNames, region))    continue;
         if (!isCompanyMatch(companyName, company))  continue;
         if (!isPoeMatch(poeNames, poe))            continue;
