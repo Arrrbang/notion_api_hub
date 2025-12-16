@@ -126,19 +126,11 @@ function setCache(res) {
 }
 
 // ────────────────────────────────
-// 메인: 라우트 등록 함수
-// ────────────────────────────────
-
-// ────────────────────────────────
 // 메인: 라우트 등록 함수 (수정본)
 // ────────────────────────────────
 
 function registerDestinationRoutes(app) {
-  
-  /**
-   * GET /api/debug/config
-   */
-  app.get("/api/debug/config", (req, res) => {
+app.get("/api/debug/config", (req, res) => {
     try {
       const dbmap = loadDbMap();
       const countries = Object.keys(dbmap || {});
@@ -148,9 +140,6 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  /**
-   * GET /api/regions/:country
-   */
   app.get("/api/regions/:country", async (req, res) => {
     const country = (req.params.country || "").trim();
     if (!country) return res.status(400).json({ ok: false, error: "country required" });
@@ -159,7 +148,6 @@ function registerDestinationRoutes(app) {
     if (!dbIds.length) return res.json({ ok: true, country, regions: [] });
 
     try {
-      // ❌ 정렬(sorts) 제거 -> 페이징만 요청 (가장 안전함)
       const body = { page_size: 100 }; 
       const results = await queryAllDatabases(dbIds, body);
       const regionSet = new Set();
@@ -179,42 +167,36 @@ function registerDestinationRoutes(app) {
     }
   });
 
-  // ─────────────────────────────────────────────────────────────
-  // 1) 지역 → 업체 (수정: 정렬 옵션 제거로 500 에러 방지)
-  // ─────────────────────────────────────────────────────────────
+  // 1) 지역 → 업체
   app.get("/api/companies/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
-  
-      if (!country || !region) {
-        return res.status(400).json({ ok: false, error: "Required params missing" });
-      }
+      if (!country || !region) return res.status(400).json({ ok: false, error: "Params missing" });
   
       const dbids = getCountryDbIds(country);
       if (!dbids.length) return res.json({ ok:true, companies:[], options:[] });
   
       let pages = [];
-      
-      // [1] 고속 모드 시도 (필터만 걸고 정렬은 안 함)
+      let debugError = null; // 에러 이유 담기
+
+      // [1] 고속 모드
       try {
         const body = {
           filter: {
             property: REGION_PROP, 
             multi_select: { contains: region }
           }
-          // ❌ sorts: [...] 삭제함 (에러 주범)
         };
         pages = await queryAllDatabases(dbids, body);
-
       } catch (filterError) {
-        // [2] 실패 시 안전 모드 (전체 가져오기)
-        console.warn(`[FastMode Failed] ${filterError.message} -> Fallback to SlowMode`);
-        
-        // 여기서도 정렬 없이 깡통 body 전송
+        // 에러 내용을 변수에 저장해서 프론트로 보냄
+        debugError = filterError.response?.data || filterError.message;
+        console.warn(`[FastMode Failed]`, debugError);
+
+        // [2] 안전 모드
         const body = {}; 
         const allPages = await queryAllDatabases(dbids, body);
-        
         pages = allPages.filter(page => {
           const props = page.properties || {};
           const regionCol = props[REGION_PROP];
@@ -223,7 +205,6 @@ function registerDestinationRoutes(app) {
         });
       }
   
-      // [3] 데이터 추출
       const companySet = new Set();
       for (const page of pages) {
         const props = page.properties || {};
@@ -231,35 +212,39 @@ function registerDestinationRoutes(app) {
         if (companyName) companySet.add(companyName);
       }
   
-      // ✅ 서버(JS)에서 안전하게 정렬 수행
       const companies = Array.from(companySet).sort((a, b) =>
         a.localeCompare(b, "ko", { sensitivity: "base" })
       );
   
       setCache(res);
-      return res.json({ ok: true, country, region, companies, options: companies, dbCount: dbids.length });
+      // 🔥 응답에 debug_error 포함
+      return res.json({ 
+        ok: true, 
+        country, 
+        region, 
+        companies, 
+        options: companies, 
+        dbCount: dbids.length,
+        isSlowMode: !!debugError, 
+        debug_error: debugError 
+      });
   
     } catch (e) {
-      console.error("GET /api/companies/by-region CRITICAL error:", e.response?.data || e.message);
-      res.status(500).json({ ok: false, error: "Server Error: " + e.message });
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 
-
-  // ─────────────────────────────────────────────────────────────
-  // 2) 업체 + 지역 → POE (수정: 정렬 제거)
-  // ─────────────────────────────────────────────────────────────
+  // 2) 업체 + 지역 → POE
   app.get("/api/poe/by-company", async (req, res) => {
     try {
       const { country, region, company } = req.query;
-      if (!country || !region || !company) {
-        return res.status(400).json({ ok:false, error:"Required params missing" });
-      }
+      if (!country || !region || !company) return res.status(400).json({ ok:false, error:"Params missing" });
   
       const dbids = getCountryDbIds(country);
       if (!dbids.length) return res.json({ ok:true, poes:[], options:[] });
   
       let pages = [];
+      let debugError = null;
   
       try {
         const body = {
@@ -269,16 +254,14 @@ function registerDestinationRoutes(app) {
               { property: COMPANY_PROP, select: { equals: company } }
             ]
           }
-           // ❌ sorts 삭제
         };
         pages = await queryAllDatabases(dbids, body);
-
       } catch (filterError) {
-        console.warn(`[FastMode Failed POE] ${filterError.message}`);
+        debugError = filterError.response?.data || filterError.message;
+        console.warn(`[FastMode Failed POE]`, debugError);
         
-        const body = {}; // 정렬 없음
+        const body = {}; 
         const allPages = await queryAllDatabases(dbids, body);
-        
         pages = allPages.filter(page => {
           const props = page.properties || {};
           const rCol = props[REGION_PROP];
@@ -295,32 +278,26 @@ function registerDestinationRoutes(app) {
         names.forEach(n => poeSet.add(n));
       }
   
-      // ✅ 서버(JS)에서 정렬
       const poes = Array.from(poeSet).sort((a,b)=> a.localeCompare(b,"ko"));
       setCache(res);
-      res.json({ ok:true, poes, options:poes });
+      res.json({ ok:true, poes, options:poes, isSlowMode: !!debugError, debug_error: debugError });
   
     } catch (e) {
-      console.error(e);
       res.status(500).json({ ok:false, error: e.message });
     }
   });
 
-
-  // ─────────────────────────────────────────────────────────────
-  // 3) 지역 + 업체 + POE → 화물타입 (수정: 정렬 제거)
-  // ─────────────────────────────────────────────────────────────
+  // 3) 지역 + 업체 + POE → 화물타입
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
       const { country, region, company, poe } = req.query;
-      if (!country || !region || !company || !poe) {
-        return res.status(400).json({ ok:false, error:"Required params missing" });
-      }
+      if (!country || !region || !company || !poe) return res.status(400).json({ ok:false, error:"Params missing" });
   
       const dbids = getCountryDbIds(country);
       if (!dbids.length) return res.json({ ok:true, types:[], options:[] });
   
       let pages = [];
+      let debugError = null;
   
       try {
         const body = {
@@ -331,16 +308,14 @@ function registerDestinationRoutes(app) {
               { property: POE_PROP, multi_select: { contains: poe } }
             ]
           }
-          // ❌ sorts 삭제
         };
         pages = await queryAllDatabases(dbids, body);
-
       } catch (filterError) {
-        console.warn(`[FastMode Failed Type] ${filterError.message}`);
+        debugError = filterError.response?.data || filterError.message;
+        console.warn(`[FastMode Failed Type]`, debugError);
         
-        const body = {}; // 정렬 없음
+        const body = {};
         const allPages = await queryAllDatabases(dbids, body);
-        
         pages = allPages.filter(page => {
           const props = page.properties || {};
           const rCol = props[REGION_PROP];
@@ -359,19 +334,14 @@ function registerDestinationRoutes(app) {
         names.forEach(n => typeSet.add(n));
       }
   
-      // ✅ 서버(JS)에서 정렬
       const types = Array.from(typeSet).sort((a,b)=> a.localeCompare(b,"ko"));
       setCache(res);
-      res.json({ ok:true, types, options:types });
+      res.json({ ok:true, types, options:types, isSlowMode: !!debugError, debug_error: debugError });
   
     } catch (e) {
-      console.error(e);
       res.status(500).json({ ok:false, error: e.message });
     }
   });
-
-} // end registerDestinationRoutes
-
-module.exports = registerDestinationRoutes;
+}
 
 module.exports = registerDestinationRoutes;
