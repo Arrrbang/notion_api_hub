@@ -129,315 +129,249 @@ function setCache(res) {
 // 메인: 라우트 등록 함수
 // ────────────────────────────────
 
+// ────────────────────────────────
+// 메인: 라우트 등록 함수 (수정본)
+// ────────────────────────────────
+
 function registerDestinationRoutes(app) {
+  
   /**
    * GET /api/debug/config
-   *
-   * - 국가 드롭다운용
-   * - 프론트에서는 j.countries 또는 j.dbStructure 사용
    */
   app.get("/api/debug/config", (req, res) => {
     try {
       const dbmap = loadDbMap();
       const countries = Object.keys(dbmap || {});
-      res.json({
-        ok: true,
-        countries,      // ["임시","미국", ...]
-        dbStructure: dbmap,
-      });
+      res.json({ ok: true, countries, dbStructure: dbmap });
     } catch (e) {
-      console.error("GET /api/debug/config error:", e);
-      res.status(500).json({
-        ok: false,
-        error: "debug-config failed",
-        details: e.message || String(e),
-      });
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 
   /**
    * GET /api/regions/:country
-   *
-   * - 1번 드롭다운에서 선택된 국가의 모든 DB에서
-   *   "지역" multi_select 속성 값들을 모아서 중복 제거 후 반환.
    */
   app.get("/api/regions/:country", async (req, res) => {
     const country = (req.params.country || "").trim();
-    if (!country) {
-      return res.status(400).json({
-        ok: false,
-        error: "country is required",
-      });
-    }
-  
+    if (!country) return res.status(400).json({ ok: false, error: "country required" });
+
     const dbIds = getCountryDbIds(country);
-    if (!dbIds.length) {
-      return res.json({ ok: true, country, regions: [] });
-    }
-  
-    if (!NOTION_TOKEN) {
-      return res.status(500).json({
-        ok: false,
-        error: "NOTION_API_KEY (또는 NOTION_TOKEN)이 설정되어 있지 않습니다.",
-      });
-    }
-  
+    if (!dbIds.length) return res.json({ ok: true, country, regions: [] });
+
     try {
-      const regionSet = new Set();
-  
-      // 🔥 pagination 지원 헬퍼 사용
-      const body = {
-        page_size: 100, // 있어도 되고, 없어도 됨 (어차피 전체 페이지 돌 거라)
-      };
-  
+      // ❌ 정렬(sorts) 제거 -> 페이징만 요청 (가장 안전함)
+      const body = { page_size: 100 }; 
       const results = await queryAllDatabases(dbIds, body);
-  
+      const regionSet = new Set();
+
       for (const page of results) {
         const props = page.properties || {};
         const col   = props[REGION_PROP];
-        if (!col || col.type !== "multi_select") continue;
-  
-        const items = col.multi_select || [];
-        for (const opt of items) {
-          if (!opt?.name) continue;
-          regionSet.add(opt.name);
+        if (col?.type === "multi_select") {
+          col.multi_select.forEach(opt => opt.name && regionSet.add(opt.name));
         }
       }
-  
       const regions = sortKoAZ(Array.from(regionSet));
       res.json({ ok: true, country, regions, dbCount: dbIds.length });
     } catch (e) {
-      console.error("GET /api/regions error:", e.response?.data || e);
-      res.status(500).json({
-        ok: false,
-        error: "regions failed",
-        details: e.response?.data || e.message || String(e),
-      });
+      console.error("Regions Error:", e.response?.data || e.message);
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 
-
-// 1) 지역 → 업체 (최적화 버전: Notion Native Filter 적용)
+  // ─────────────────────────────────────────────────────────────
+  // 1) 지역 → 업체 (수정: 정렬 옵션 제거로 500 에러 방지)
+  // ─────────────────────────────────────────────────────────────
   app.get("/api/companies/by-region", async (req, res) => {
     try {
       const country = (req.query.country || "").trim();
       const region  = (req.query.region  || "").trim();
   
       if (!country || !region) {
-        return res.status(400).json({
-          ok: false,
-          error: "country and region are required",
-        });
+        return res.status(400).json({ ok: false, error: "Required params missing" });
       }
   
       const dbids = getCountryDbIds(country);
-      if (!dbids.length) {
-        return res.json({
-          ok: true,
-          country,
-          region,
-          companies: [],
-          options: [],
+      if (!dbids.length) return res.json({ ok:true, companies:[], options:[] });
+  
+      let pages = [];
+      
+      // [1] 고속 모드 시도 (필터만 걸고 정렬은 안 함)
+      try {
+        const body = {
+          filter: {
+            property: REGION_PROP, 
+            multi_select: { contains: region }
+          }
+          // ❌ sorts: [...] 삭제함 (에러 주범)
+        };
+        pages = await queryAllDatabases(dbids, body);
+
+      } catch (filterError) {
+        // [2] 실패 시 안전 모드 (전체 가져오기)
+        console.warn(`[FastMode Failed] ${filterError.message} -> Fallback to SlowMode`);
+        
+        // 여기서도 정렬 없이 깡통 body 전송
+        const body = {}; 
+        const allPages = await queryAllDatabases(dbids, body);
+        
+        pages = allPages.filter(page => {
+          const props = page.properties || {};
+          const regionCol = props[REGION_PROP];
+          if (!regionCol || regionCol.type !== "multi_select") return false;
+          return (regionCol.multi_select || []).some(opt => opt && opt.name === region);
         });
       }
   
-      // ✅ 핵심 수정: Notion API 필터 사용 (서버 부하 감소 & 속도 향상)
-      const body = {
-        filter: {
-          property: REGION_PROP, // 환경변수 또는 "지역"
-          multi_select: {
-            contains: region // 해당 지역을 포함하는 행만 가져옴
-          }
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }],
-      };
-  
-      // 필터링된 소량의 데이터만 가져옴
-      const pages = await queryAllDatabases(dbids, body);
-  
+      // [3] 데이터 추출
       const companySet = new Set();
-  
       for (const page of pages) {
         const props = page.properties || {};
-        
-        // 이미 노션에서 지역 필터링을 했으므로, 바로 업체명만 추출하면 됨
         const companyName = getSelectName(props, COMPANY_PROP);
-        if (companyName) {
-          companySet.add(companyName);
-        }
+        if (companyName) companySet.add(companyName);
       }
   
+      // ✅ 서버(JS)에서 안전하게 정렬 수행
       const companies = Array.from(companySet).sort((a, b) =>
         a.localeCompare(b, "ko", { sensitivity: "base" })
       );
   
       setCache(res);
-      return res.json({
-        ok: true,
-        country,
-        region,
-        companies,
-        options: companies,
-        dbCount: dbids.length,
-      });
+      return res.json({ ok: true, country, region, companies, options: companies, dbCount: dbids.length });
+  
     } catch (e) {
-      console.error("GET /api/companies/by-region error:", e.response?.data || e);
-      return res.status(500).json({
-        ok: false,
-        error: "companies-by-region failed",
-        details: e.response?.data || e.message || String(e),
-      });
+      console.error("GET /api/companies/by-region CRITICAL error:", e.response?.data || e.message);
+      res.status(500).json({ ok: false, error: "Server Error: " + e.message });
     }
   });
 
-// 3) 업체 + 지역 → POE (최적화 버전: AND 필터 적용)
+
+  // ─────────────────────────────────────────────────────────────
+  // 2) 업체 + 지역 → POE (수정: 정렬 제거)
+  // ─────────────────────────────────────────────────────────────
   app.get("/api/poe/by-company", async (req, res) => {
     try {
-      const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim();
-      const company = (req.query.company || "").trim();
-  
+      const { country, region, company } = req.query;
       if (!country || !region || !company) {
-        return res.status(400).json({
-          ok: false,
-          error: "country, region, company are required"
-        });
+        return res.status(400).json({ ok:false, error:"Required params missing" });
       }
   
       const dbids = getCountryDbIds(country);
-      if (dbids.length === 0) {
-        return res.json({ ok: true, country, region, company, poes: [], options: [] });
+      if (!dbids.length) return res.json({ ok:true, poes:[], options:[] });
+  
+      let pages = [];
+  
+      try {
+        const body = {
+          filter: {
+            and: [
+              { property: REGION_PROP, multi_select: { contains: region } },
+              { property: COMPANY_PROP, select: { equals: company } }
+            ]
+          }
+           // ❌ sorts 삭제
+        };
+        pages = await queryAllDatabases(dbids, body);
+
+      } catch (filterError) {
+        console.warn(`[FastMode Failed POE] ${filterError.message}`);
+        
+        const body = {}; // 정렬 없음
+        const allPages = await queryAllDatabases(dbids, body);
+        
+        pages = allPages.filter(page => {
+          const props = page.properties || {};
+          const rCol = props[REGION_PROP];
+          const hasRegion = rCol?.multi_select?.some(o => o.name === region);
+          const cName = getSelectName(props, COMPANY_PROP);
+          const hasCompany = (cName === company);
+          return hasRegion && hasCompany;
+        });
       }
   
-      // ✅ 핵심 수정: 지역 AND 업체 필터 동시 적용
-      const body = {
-        filter: {
-          and: [
-            {
-              property: REGION_PROP,
-              multi_select: { contains: region }
-            },
-            {
-              property: COMPANY_PROP,
-              select: { equals: company }
-            }
-          ]
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }]
-      };
-  
-      const pages = await queryAllDatabases(dbids, body);
       const poeSet = new Set();
-  
       for (const page of pages) {
-        const props = page.properties || {};
-        // 필터링된 데이터에서 POE 값만 추출
-        const poeNames = getMultiSelectNames(props, POE_PROP);
-        poeNames.forEach(name => poeSet.add(name));
+        const names = getMultiSelectNames(page.properties, POE_PROP);
+        names.forEach(n => poeSet.add(n));
       }
   
-      const poes = Array.from(poeSet).sort((a, b) =>
-        a.localeCompare(b, "ko", { sensitivity: "base" })
-      );
-  
+      // ✅ 서버(JS)에서 정렬
+      const poes = Array.from(poeSet).sort((a,b)=> a.localeCompare(b,"ko"));
       setCache(res);
-      return res.json({
-        ok: true,
-        country,
-        region,
-        company,
-        poes,
-        options: poes,
-        dbCount: dbids.length
-      });
+      res.json({ ok:true, poes, options:poes });
+  
     } catch (e) {
-      console.error("GET /api/poe/by-company error:", e.response?.data || e);
-      return res.status(500).json({
-        ok: false,
-        error: "poe-by-company failed",
-        details: e.response?.data || e.message || String(e)
-      });
+      console.error(e);
+      res.status(500).json({ ok:false, error: e.message });
     }
   });
 
 
-// 4) 지역 + 업체 + POE → 화물타입 (최적화 버전: 3중 AND 필터)
+  // ─────────────────────────────────────────────────────────────
+  // 3) 지역 + 업체 + POE → 화물타입 (수정: 정렬 제거)
+  // ─────────────────────────────────────────────────────────────
   app.get("/api/cargo-types/by-partner", async (req, res) => {
     try {
-      const country = (req.query.country || "").trim();
-      const region  = (req.query.region  || "").trim();
-      const company = (req.query.company || "").trim();
-      const poe     = (req.query.poe     || "").trim();
-  
+      const { country, region, company, poe } = req.query;
       if (!country || !region || !company || !poe) {
-        return res.status(400).json({
-          ok: false,
-          error: "country, region, company, poe are all required",
-        });
+        return res.status(400).json({ ok:false, error:"Required params missing" });
       }
   
       const dbids = getCountryDbIds(country);
-      if (!dbids.length) {
-        return res.json({
-          ok: true,
-          country,
-          region,
-          company,
-          poe,
-          types: [],
-          options: [],
+      if (!dbids.length) return res.json({ ok:true, types:[], options:[] });
+  
+      let pages = [];
+  
+      try {
+        const body = {
+          filter: {
+            and: [
+              { property: REGION_PROP, multi_select: { contains: region } },
+              { property: COMPANY_PROP, select: { equals: company } },
+              { property: POE_PROP, multi_select: { contains: poe } }
+            ]
+          }
+          // ❌ sorts 삭제
+        };
+        pages = await queryAllDatabases(dbids, body);
+
+      } catch (filterError) {
+        console.warn(`[FastMode Failed Type] ${filterError.message}`);
+        
+        const body = {}; // 정렬 없음
+        const allPages = await queryAllDatabases(dbids, body);
+        
+        pages = allPages.filter(page => {
+          const props = page.properties || {};
+          const rCol = props[REGION_PROP];
+          const hasRegion = rCol?.multi_select?.some(o => o.name === region);
+          const cName = getSelectName(props, COMPANY_PROP);
+          const hasCompany = (cName === company);
+          const pCol = props[POE_PROP];
+          const hasPoe = pCol?.multi_select?.some(o => o.name === poe);
+          return hasRegion && hasCompany && hasPoe;
         });
       }
   
-      // ✅ 핵심 수정: 3가지 조건(Region, Company, POE) 모두 필터링
-      const body = {
-        filter: {
-          and: [
-            { property: REGION_PROP, multi_select: { contains: region } },
-            { property: COMPANY_PROP, select: { equals: company } },
-            { property: POE_PROP, multi_select: { contains: poe } }
-          ]
-        },
-        sorts: [{ property: ORDER_PROP, direction: "ascending" }],
-      };
-  
-      const pages = await queryAllDatabases(dbids, body);
       const typeSet = new Set();
-  
       for (const page of pages) {
-        const props = page.properties || {};
-        // 조건에 맞는 데이터의 화물타입만 추출
-        const typeNames = getMultiSelectNames(props, DIPLO_PROP);
-        typeNames.forEach((name) => typeSet.add(name));
+        const names = getMultiSelectNames(page.properties, DIPLO_PROP);
+        names.forEach(n => typeSet.add(n));
       }
   
-      const types = Array.from(typeSet).sort((a, b) =>
-        a.localeCompare(b, "ko", { sensitivity: "base" })
-      );
-  
+      // ✅ 서버(JS)에서 정렬
+      const types = Array.from(typeSet).sort((a,b)=> a.localeCompare(b,"ko"));
       setCache(res);
-      return res.json({
-        ok: true,
-        country,
-        region,
-        company,
-        poe,
-        types,
-        options: types,
-        dbCount: dbids.length,
-      });
+      res.json({ ok:true, types, options:types });
+  
     } catch (e) {
-      console.error(
-        "GET /api/cargo-types/by-partner error:",
-        e.response?.data || e
-      );
-      return res.status(500).json({
-        ok: false,
-        error: "cargo-types-by-partner failed",
-        details: e.response?.data || e.message || String(e),
-      });
+      console.error(e);
+      res.status(500).json({ ok:false, error: e.message });
     }
   });
-}
+
+} // end registerDestinationRoutes
+
+module.exports = registerDestinationRoutes;
 
 module.exports = registerDestinationRoutes;
