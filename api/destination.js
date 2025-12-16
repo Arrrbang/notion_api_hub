@@ -241,32 +241,62 @@ function evalFormula(code, context) {
   }
 }
 
+// [최종] 범위 목록 처리 함수 (쉼표 구분 지원, <= 등 특수기호 지원)
 function evalRangeFormula(code, cbm) {
   if (!code) return undefined;
-  const lines = code.split(/\n+/).map(s => s.trim()).filter(Boolean);
+
+  // ─────────────────────────────────────────────────────────────
+  // [수정 포인트] 줄바꿈(\n) 뿐만 아니라 쉼표(,)로도 문장을 나눕니다.
+  // 예: "1<=CBM<=10=200, 11<=CBM<=20=300" -> 두 개의 규칙으로 인식
+  // ─────────────────────────────────────────────────────────────
+  const lines = code.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  
   for (const line of lines) {
-    let m = line.match(/^(\d+)\s*[<≤]\s*CBM\s*[<≤]\s*(\d+)\s*=\s*(\d+)/i);
+    // 1. 범위 문법: "1 <= CBM <= 10 = 200"
+    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      if (cbm >= Number(m[1]) && cbm <= Number(m[2])) return Number(m[3]);
+      const min = Number(m[1]);
+      const max = Number(m[2]);
+      const val = Number(m[3]);
+      if (cbm >= min && cbm <= max) return val;
       continue;
     }
-    m = line.match(/^CBM\s*([<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
+
+    // 2. 단일 조건 문법: "CBM <= 20 = 400"
+    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
     if (m) {
-      const op = m[1], num = Number(m[2]), val = Number(m[3]);
-      if ((op==='<' && cbm<num) || (op==='>' && cbm>num) || (op==='<=' && cbm<=num) || (op==='>=' && cbm>=num)) return val;
+      const op = m[1];
+      const num = Number(m[2]);
+      const val = Number(m[3]);
+      
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+      
+      if (match) return val;
       continue;
     }
-    m = line.match(/^(\d+)\s*<\s*CBM\s*<\s*(\d+)\s*=\s*(\d+)/i);
+
+    // 3. IF 문법: "IF CBM > 20 THEN 400"
+    m = line.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
     if (m) {
-      if (cbm > Number(m[1]) && cbm < Number(m[2])) return Number(m[3]);
+      const op = m[1];
+      const num = Number(m[2]);
+      const val = Number(m[3]);
+      
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+
+      if (match) return val;
       continue;
     }
-    m = line.match(/^IF\s+CBM\s*([<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
-    if (m) {
-      const op = m[1], num = Number(m[2]), val = Number(m[3]);
-      if ((op==='<' && cbm<num) || (op==='>' && cbm>num) || (op==='<=' && cbm<=num) || (op==='>=' && cbm>=num)) return val;
-      continue;
-    }
+
+    // 4. ELSE 문법: "ELSE 500"
     m = line.match(/^ELSE\s+(\d+)/i);
     if (m) return Number(m[1]);
   }
