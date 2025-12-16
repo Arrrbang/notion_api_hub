@@ -214,15 +214,31 @@ function getFormulaText(props, key) {
 function evalFormula(code, context) {
   if (!code) return undefined;
   let expr = String(code).trim();
-  const safe = /^[0-9+\-*/().\sCBMcbm]+$/;
-  if (!safe.test(expr)) return undefined;
+
+  // 1. 보안 검사 (허용 문자 목록 확장: MAX, MIN, 쉼표 포함)
+  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,]+$/i;
+
+  if (!safe.test(expr)) {
+    return undefined;
+  }
+
   const cbmVal = Number(context?.cbm ?? 0);
+
+  // 2. CBM 값 치환
   expr = expr.replace(/CBM/gi, String(cbmVal));
+
+  // 3. 엑셀식 함수(MAX, MIN)를 자바스크립트 함수(Math.max, Math.min)로 변환
+  expr = expr.replace(/MAX/gi, 'Math.max');
+  expr = expr.replace(/MIN/gi, 'Math.min');
+
   try {
+    // 4. 수식 계산 실행
     const fn = new Function('"use strict"; return (' + expr + ');');
     const val = fn();
     return Number.isFinite(val) ? val : undefined;
-  } catch (e) { return undefined; }
+  } catch (e) {
+    return undefined;
+  }
 }
 
 function evalRangeFormula(code, cbm) {
