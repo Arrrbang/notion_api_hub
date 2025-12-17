@@ -563,62 +563,76 @@ function registerCostsRoutes(app) {
   app.get('/api/costs/:country', async (req, res) => {
     try {
       const country = (req.params.country || '').trim();
-      if (!country) {
-        return res.status(400).json({ ok:false, error:'country is required' });
-      }
-
+      if (!country) return res.status(400).json({ ok:false, error:'country is required' });
+  
       const mode = (req.query.mode || '').trim();
       const region  = (req.query.region  || '').trim();
       const company = (req.query.company || '').trim();
       const poe     = (req.query.poe     || '').trim();
-
+  
       const typeRaw = (req.query.type    || '20FT').trim().toUpperCase();
-      const type    = (typeRaw === 'CONSOLE' ? 'CONSOLE'
-                      : typeRaw === '40HC'   ? '40HC'
-                      : '20FT');
-
+      const type    = (typeRaw === 'CONSOLE' ? 'CONSOLE' : typeRaw === '40HC' ? '40HC' : '20FT');
       const cbm = req.query.cbm != null ? Number(req.query.cbm) : NaN;
-
+  
       const rolesParam = (req.query.roles || '').trim();
-      const roles = rolesParam
-        ? rolesParam.split(',').map(s => s.trim()).filter(Boolean)
-        : [];
-
+      const roles = rolesParam ? rolesParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+  
       const dbIds = getCountryDbIds(country);
       if (!dbIds.length) {
-        return res.json({
-          ok: true, country, type, rows: [], numberFormats: {}, currency: 'USD',
-        });
+        return res.json({ ok: true, country, type, rows: [], numberFormats: {}, currency: 'USD' });
       }
-
-      if (!NOTION_TOKEN) {
-        return res.status(500).json({ ok: false, error: 'NOTION_TOKEN missing' });
-      }
-
-      // 공통 body (정렬)
+  
+      // --- [핵심 최적화] Notion Query 필터 구성 ---
       const body = {
         page_size: 100,
         sorts: [{ property: ORDER_PROP, direction: 'ascending' }],
       };
-
-      // ★ 메인 라우트도 지역 필터 적용 (속도 최적화)
+  
+      // 필터 조건들을 담을 배열
+      const filters = [];
+  
+      // 1. 지역 필터 (선택된 지역 OR 지역값이 비어있는 공통 항목)
       if (region) {
-        body.filter = {
-          property: REGION_PROP,
-          multi_select: { contains: region }
-        };
+        filters.push({
+          or: [
+            { property: REGION_PROP, multi_select: { contains: region } },
+            { property: REGION_PROP, multi_select: { is_empty: true } } // 공통 항목 포함
+          ]
+        });
       }
-
+  
+      // 2. 업체 필터 (선택된 업체 OR 업체값이 비어있는 공통 항목)
+      // 주의: 업체가 비어있는 항목을 공통으로 쓸지 여부는 정책에 따름. 보통은 업체 지정 필수.
+      // 여기서는 사용자가 선택한 업체만 가져오도록 함 (속도 향상)
+      if (company) {
+        filters.push({
+          property: COMPANY_PROP,
+          select: { equals: company }
+        });
+      }
+      
+      // 3. POE 필터 (선택된 POE가 포함된 것)
+      if (poe) {
+        filters.push({
+            property: POE_PROP,
+            multi_select: { contains: poe }
+        });
+      }
+  
+      // 필터 조합 (AND 조건)
+      if (filters.length > 0) {
+        body.filter = { and: filters };
+      }
+  
+      // --- Notion 데이터 조회 (단 1회 수행) ---
       const pages = await queryAllDatabases(dbIds, body);
-
-      if (mode === 'data') {
-        return res.json({ ok: true, country, rows: pages });
-      }
-
+  
+      if (mode === 'data') return res.json({ ok: true, country, rows: pages });
+  
       const rows = [];
       for (const page of pages) {
         const props = page.properties || {};
-
+  
         const regionNames = getMultiSelectNames(props[REGION_PROP]);
         const companyName = getSelectName(props[COMPANY_PROP]);
         const poeNames    = getMultiSelectNames(props[POE_PROP]);
@@ -626,21 +640,30 @@ function registerCostsRoutes(app) {
         const basicType   = getSelectName(props[BASIC_PROP]) || '';
         const displayType = getSelectName(props[DISPLAY_TYPE_PROP]) || '';
         const order       = getNumberFromProp(props[ORDER_PROP]) ?? getOrderNumber(page);
-
-        // 2차 필터 검증
-        if (!isRegionMatch(regionNames, region))    continue;
-        if (!isCompanyMatch(companyName, company))  continue;
-        if (!isPoeMatch(poeNames, poe))            continue;
-        if (!isCargoMatch(cargoNames, roles))      continue;
-
+  
+        // --- [메모리상 2차 필터링] (API 필터의 한계 보완) ---
+        // 1. 지역: 선택한 지역이거나, 아예 지역이 없는(공통) 경우만 통과
+        const isCommonRegion = regionNames.length === 0;
+        if (region && !regionNames.includes(region) && !isCommonRegion) continue;
+  
+        // 2. 업체: 일치해야 함
+        if (!isCompanyMatch(companyName, company)) continue;
+  
+        // 3. POE: 일치해야 함
+        if (!isPoeMatch(poeNames, poe)) continue;
+  
+        // 4. 화물타입: 일치해야 함
+        if (!isCargoMatch(cargoNames, roles)) continue;
+  
+        // 금액 계산
         const amount = computeAmount(props, type, cbm, region);
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
         const extra = getRichTextHtml(props, EXTRA_PROP) || '';
-
+  
         rows.push({
           id: page.id,
           item,
-          region: regionNames.join(', '),
+          region: regionNames.join(', '), // 디버깅용 표시
           company: companyName,
           poe: poeNames.join(', '),
           cargoTypes: cargoNames,
@@ -651,19 +674,16 @@ function registerCostsRoutes(app) {
           extra,
         });
       }
-
-      rows.sort((a, b) => {
-        const oa = Number(a.order) || 0;
-        const ob = Number(b.order) || 0;
-        return oa - ob;
-      });
-
+  
+      rows.sort((a, b) => (Number(a.order)||0) - (Number(b.order)||0));
+  
       return res.json({
         ok: true, country, type, rows, numberFormats: {}, currency: 'USD',
       });
+  
     } catch (e) {
-      console.error('GET /api/costs error:', e.response?.data || e);
-      res.status(500).json({ ok: false, error: 'costs failed', details: String(e) });
+      console.error('GET /api/costs error:', e);
+      res.status(500).json({ ok: false, error: 'costs failed' });
     }
   });
 }
