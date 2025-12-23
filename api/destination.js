@@ -216,7 +216,7 @@ function evalFormula(code, context) {
   let expr = String(code).trim();
 
   // 1. 보안 검사 (허용 문자 목록 확장: MAX, MIN, 쉼표 포함)
-  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,]+$/i;
+  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,<>?=:]+$/i;
 
   if (!safe.test(expr)) {
     return undefined;
