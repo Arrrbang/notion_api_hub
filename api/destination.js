@@ -19,6 +19,7 @@ const ITEM_PROP       = process.env.ITEM_PROP        || '항목';       // title
 const EXTRA_PROP      = process.env.EXTRA_PROP       || '참고사항';   // rich_text
 const FORMULA_PROP    = process.env.FORMULA_PROP     || '계산식';     
 const DISPLAY_TYPE_PROP = process.env.DISPLAY_TYPE_PROP || '표시타입'; 
+const CBM_DIRECT_PROPS = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
 
 // CONSOLE 계산용
 const MIN_COST_PROP   = process.env.MIN_COST_PROP    || 'MIN COST';
@@ -126,6 +127,20 @@ function getNumberFromProp(prop) {
   if (typeof prop === 'number') return prop;
   if (typeof prop.number === 'number') return prop.number;
   if (typeof prop.value === 'number')  return prop.value;
+  return undefined;
+}
+
+function getDirectCbmAmount(props, cbm) {
+  if (!Number.isFinite(cbm) || cbm < 1 || cbm > 28) return undefined;
+
+  const cbmKey = Math.floor(cbm).toString(); 
+  const prop = props[cbmKey]; // 노션에서 가져온 1~28 속성 확인
+
+  if (prop) {
+    // 위에 정의된 getNumberFromProp를 사용하여 노션 숫자값 추출
+    const val = getNumberFromProp(prop); 
+    if (Number.isFinite(val)) return val;
+  }
   return undefined;
 }
 
@@ -362,6 +377,12 @@ function applyTypeFormula(code, currentType) {
 
 function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
+
+  const directAmount = getDirectCbmAmount(props, cbm);
+  if (directAmount !== undefined) {
+    return directAmount; // 값이 있으면 즉시 반환
+  }
+  
   const val20 = getNumberFromProp(props['20FT']);
   const val40 = getNumberFromProp(props['40HC']);
   const consoleAmt = calcConsoleAmount(props, cbm);
