@@ -253,21 +253,20 @@ function evalRangeFormula(code, cbm) {
   
   for (const line of lines) {
     // 1. 범위 문법: "1 <= CBM <= 10 = 200"
-    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(\d+)/i);
+    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
     if (m) {
       const min = Number(m[1]);
       const max = Number(m[2]);
-      const val = Number(m[3]);
-      if (cbm >= min && cbm <= max) return val;
+      if (cbm >= min && cbm <= max) return evalFormula(m[3].trim(), { cbm });
       continue;
     }
 
     // 2. 단일 조건 문법: "CBM <= 20 = 400"
-    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(\d+)/i);
+    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
     if (m) {
       const op = m[1];
       const num = Number(m[2]);
-      const val = Number(m[3]);
+      const valExpr = m[3].trim();
       
       let match = false;
       if (op === '<' && cbm < num) match = true;
@@ -275,9 +274,9 @@ function evalRangeFormula(code, cbm) {
       else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
       else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
       
-      if (match) return val;
-      continue;
-    }
+      if (match) return evalFormula(valExpr, { cbm });
+        continue;
+      }
 
     // 3. IF 문법: "IF CBM > 20 THEN 400"
     m = line.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
