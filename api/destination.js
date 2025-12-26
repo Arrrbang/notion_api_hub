@@ -19,6 +19,7 @@ const ITEM_PROP       = process.env.ITEM_PROP        || '항목';       // title
 const EXTRA_PROP      = process.env.EXTRA_PROP       || '참고사항';   // rich_text
 const FORMULA_PROP    = process.env.FORMULA_PROP     || '계산식';     
 const DISPLAY_TYPE_PROP = process.env.DISPLAY_TYPE_PROP || '표시타입'; 
+const CURRENCY_PROP     = '통화';
 const CBM_DIRECT_PROPS = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
 
 // CONSOLE 계산용
