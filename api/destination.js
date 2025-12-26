@@ -580,7 +580,7 @@ function registerCostsRoutes(app) {
    * 4. [메인] 비용 조회 (최종 계산)
    * GET /api/costs/:country
    */
-  app.get('/api/costs/:country', async (req, res) => {
+app.get('/api/costs/:country', async (req, res) => {
     try {
       const country = (req.params.country || '').trim();
       if (!country) return res.status(400).json({ ok:false, error:'country is required' });
@@ -602,36 +602,26 @@ function registerCostsRoutes(app) {
         return res.json({ ok: true, country, type, rows: [], numberFormats: {}, currency: 'USD' });
       }
   
-      // --- [핵심 최적화] Notion Query 필터 구성 ---
       const body = {
         page_size: 100,
         sorts: [{ property: ORDER_PROP, direction: 'ascending' }],
       };
   
-      // 필터 조건들을 담을 배열
       const filters = [];
-  
-      // 1. 지역 필터 (선택된 지역 OR 지역값이 비어있는 공통 항목)
       if (region) {
         filters.push({
           or: [
             { property: REGION_PROP, multi_select: { contains: region } },
-            { property: REGION_PROP, multi_select: { is_empty: true } } // 공통 항목 포함
+            { property: REGION_PROP, multi_select: { is_empty: true } }
           ]
         });
       }
-  
-      // 2. 업체 필터 (선택된 업체 OR 업체값이 비어있는 공통 항목)
-      // 주의: 업체가 비어있는 항목을 공통으로 쓸지 여부는 정책에 따름. 보통은 업체 지정 필수.
-      // 여기서는 사용자가 선택한 업체만 가져오도록 함 (속도 향상)
       if (company) {
         filters.push({
           property: COMPANY_PROP,
           select: { equals: company }
         });
       }
-      
-      // 3. POE 필터 (선택된 POE가 포함된 것)
       if (poe) {
         filters.push({
             property: POE_PROP,
@@ -639,20 +629,29 @@ function registerCostsRoutes(app) {
         });
       }
   
-      // 필터 조합 (AND 조건)
       if (filters.length > 0) {
         body.filter = { and: filters };
       }
   
-      // --- Notion 데이터 조회 (단 1회 수행) ---
       const pages = await queryAllDatabases(dbIds, body);
   
       if (mode === 'data') return res.json({ ok: true, country, rows: pages });
   
+      // --- 수정 포인트: 변수 선언 위치 ---
       const rows = [];
+      let detectedCurrency = 'USD'; // 기본값 설정
+  
       for (const page of pages) {
         const props = page.properties || {};
-  
+        
+        // --- 수정 포인트: 중첩 루프 제거 및 통화 감지 로직 ---
+        // 루프를 돌면서 '통화' 속성이 있는 첫 번째 행의 값을 사용하거나 마지막 값을 유지함
+        const curProp = props[CURRENCY_PROP]; // CURRENCY_PROP는 상단에 '통화'로 정의되어 있어야 함
+        if (curProp && curProp.rich_text && curProp.rich_text.length > 0) {
+            const curVal = curProp.rich_text.map(t => t.plain_text).join('').trim().toUpperCase();
+            if (curVal) detectedCurrency = curVal; 
+        }
+
         const regionNames = getMultiSelectNames(props[REGION_PROP]);
         const companyName = getSelectName(props[COMPANY_PROP]);
         const poeNames    = getMultiSelectNames(props[POE_PROP]);
@@ -661,21 +660,12 @@ function registerCostsRoutes(app) {
         const displayType = getSelectName(props[DISPLAY_TYPE_PROP]) || '';
         const order       = getNumberFromProp(props[ORDER_PROP]) ?? getOrderNumber(page);
   
-        // --- [메모리상 2차 필터링] (API 필터의 한계 보완) ---
-        // 1. 지역: 선택한 지역이거나, 아예 지역이 없는(공통) 경우만 통과
         const isCommonRegion = regionNames.length === 0;
         if (region && !regionNames.includes(region) && !isCommonRegion) continue;
-  
-        // 2. 업체: 일치해야 함
         if (!isCompanyMatch(companyName, company)) continue;
-  
-        // 3. POE: 일치해야 함
         if (!isPoeMatch(poeNames, poe)) continue;
-  
-        // 4. 화물타입: 일치해야 함
         if (!isCargoMatch(cargoNames, roles)) continue;
   
-        // 금액 계산
         const amount = computeAmount(props, type, cbm, region);
         const item  = getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '';
         const extra = getRichTextHtml(props, EXTRA_PROP) || '';
@@ -683,7 +673,7 @@ function registerCostsRoutes(app) {
         rows.push({
           id: page.id,
           item,
-          region: regionNames.join(', '), // 디버깅용 표시
+          region: regionNames.join(', '),
           company: companyName,
           poe: poeNames.join(', '),
           cargoTypes: cargoNames,
@@ -697,8 +687,13 @@ function registerCostsRoutes(app) {
   
       rows.sort((a, b) => (Number(a.order)||0) - (Number(b.order)||0));
   
+      // --- 최종 응답 ---
       return res.json({
-        ok: true, country, type, rows, numberFormats: {}, currency: 'USD',
+        ok: true,
+        country,
+        type,
+        rows,
+        currency: detectedCurrency // 감지된 통화 변수 전달
       });
   
     } catch (e) {
