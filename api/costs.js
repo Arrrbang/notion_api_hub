@@ -244,37 +244,76 @@ function evalFormula(code, context) {
 
 function evalRangeFormula(code, cbm) {
   if (!code) return undefined;
-  const lines = code.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+
+  // 1. IF문 처리 과정에서 생긴 외곽 괄호 제거
+  // 예: "( rule1 \n rule2 )" -> "rule1 \n rule2"
+  let clean = code.trim();
+  while (clean.startsWith('(') && clean.endsWith(')')) {
+    // 단순 제거가 아니라 짝이 맞을 때만 제거 (안전장치)
+    let depth = 0;
+    let isPair = true;
+    for (let i = 0; i < clean.length - 1; i++) {
+      if (clean[i] === '(') depth++;
+      else if (clean[i] === ')') depth--;
+      if (depth === 0) { isPair = false; break; } // 중간에 닫혀버리면 외곽 괄호가 아님
+    }
+    if (isPair) clean = clean.slice(1, -1).trim();
+    else break;
+  }
+
+  // 2. 줄바꿈(\n) 또는 쉼표(,)로 문장 분리
+  const lines = clean.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  
   for (const line of lines) {
-    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
+    // 라인별로 앞뒤에 남은 괄호 잔여물 제거 (정규식 매칭을 위해)
+    // 예: "CBM<=20=100 )" -> "CBM<=20=100"
+    const safeLine = line.replace(/^\(+|\)+$/g, '').trim();
+
+    // 1. 범위 문법: "1 <= CBM <= 10 = 200"
+    let m = safeLine.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
     if (m) {
-      const min = Number(m[1]); const max = Number(m[2]);
+      const min = Number(m[1]);
+      const max = Number(m[2]);
       if (cbm >= min && cbm <= max) return evalFormula(m[3].trim(), { cbm });
       continue;
     }
-    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
+
+    // 2. 단일 조건 문법: "CBM <= 20 = 400"
+    m = safeLine.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
     if (m) {
-      const op = m[1]; const num = Number(m[2]); const valExpr = m[3].trim();
+      const op = m[1];
+      const num = Number(m[2]);
+      const valExpr = m[3].trim();
+      
       let match = false;
       if (op === '<' && cbm < num) match = true;
       else if (op === '>' && cbm > num) match = true;
       else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
       else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+      
       if (match) return evalFormula(valExpr, { cbm });
       continue;
     }
-    m = line.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
+
+    // 3. IF 문법 (중첩된 경우)
+    m = safeLine.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
     if (m) {
-      const op = m[1]; const num = Number(m[2]); const val = Number(m[3]);
+      const op = m[1];
+      const num = Number(m[2]);
+      const val = Number(m[3]);
+      
       let match = false;
       if (op === '<' && cbm < num) match = true;
       else if (op === '>' && cbm > num) match = true;
       else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
       else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+
       if (match) return val;
       continue;
     }
-    m = line.match(/^ELSE\s+(\d+)/i);
+
+    // 4. ELSE 문법
+    m = safeLine.match(/^ELSE\s+(\d+)/i);
     if (m) return Number(m[1]);
   }
   return undefined;
