@@ -371,14 +371,28 @@ function applyTypeFormula(code, currentType) {
 function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
 
-  // 1순위: 1~28 CBM 직접 입력 속성 확인
+  // 1순위: 1~28 CBM 직접 입력 속성 확인 (기존 로직)
+  // 1~28 사이의 정수 CBM이 입력되면 해당 속성값을 바로 반환합니다.
   const directAmount = getDirectCbmAmount(props, cbm);
   if (directAmount !== undefined) return directAmount;
 
-  // 2순위: 컨테이너별/CONSOLE 기본 계산
+  // [추가] CBM 29 이상일 때: (선택CBM - 28) * PER_CBM + 28_CBM_값
+  if (cbm > 28) {
+    const val28 = getNumberFromProp(props['28']);      // '28' 속성 값 가져오기
+    const perCost = getNumberFromProp(props[PER_COST_PROP]); // 'PER CBM' 값 가져오기
+
+    // 두 값이 모두 유효한 숫자인 경우에만 계산 수행
+    if (Number.isFinite(val28) && Number.isFinite(perCost)) {
+      return val28 + (cbm - 28) * perCost;
+    }
+  }
+
+  // 2순위: 컨테이너별/CONSOLE 기본 계산 (기존 로직)
   const val20 = getNumberFromProp(props['20FT']);
   const val40 = getNumberFromProp(props['40HC']);
   const consoleAmt = calcConsoleAmount(props, cbm);
+  
+  // 20FT, 40HC, Console 계산값 중 하나라도 있으면 기본 비용이 있는 것으로 간주
   const hasBaseCost = Number.isFinite(val20) || Number.isFinite(val40) || Number.isFinite(consoleAmt);
 
   if (type === '20FT') {
@@ -389,9 +403,10 @@ function computeAmount(props, type, cbm, selectedRegion) {
     amount = consoleAmt;
   }
 
-  // 3순위: 계산식(Formula) 적용
+  // 3순위: 계산식(Formula) 적용 (기존 로직)
   const baseAmount = amount;
   const rawFormula = getFormulaText(props, FORMULA_PROP);
+  // 기본 비용이 없거나, 식에 특수 키워드(REGION, DEFAULT, TYPE 등)가 있으면 수식 적용 시도
   const shouldUseFormula = rawFormula && (!hasBaseCost || /REGION\b|DEFAULT\b|TYPE\b/i.test(rawFormula));
 
   if (shouldUseFormula) {
@@ -401,6 +416,7 @@ function computeAmount(props, type, cbm, selectedRegion) {
     if (!Number.isFinite(v)) v = evalFormula(code, { cbm });
     if (Number.isFinite(v)) amount = v;
   }
+  
   return amount;
 }
 
