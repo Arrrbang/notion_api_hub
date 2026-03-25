@@ -5,7 +5,6 @@ const express = require("express");
 const cors    = require("cors");
 const axios   = require("axios");
 
-const registerDestinationRoutes = require("./destination");
 const registerOutboundSosRoutes = require("./sos/outbound");
 const registerInboundSosRoutes  = require("./sos/inbound");
 const registerSosNoticeRoutes   = require("./sos/notice");
@@ -87,7 +86,6 @@ app.get(["/", "/api/health"], async (req, res) => {
 registerOutboundSosRoutes(app);
 registerInboundSosRoutes(app);
 registerSosNoticeRoutes(app);
-registerDestinationRoutes(app);
 registerCostsRoutes(app);  
 registerYesg2mRoutes(app);
 registerHansolRoutes(app);
