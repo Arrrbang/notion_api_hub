@@ -1,4 +1,4 @@
-// backend/costs.js - 통합 및 최적화 최종 버전
+// backend/costs.js - 수식(Formula) 엔진 완벽 복구 버전
 
 const fs    = require('fs');
 const path  = require('path');
@@ -9,7 +9,6 @@ const axios = require('axios');
 // ────────────────────────────────
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
-// 속성명 설정
 const REGION_PROP       = process.env.REGION_PROP       || '지역';       
 const COMPANY_PROP      = process.env.COMPANY_PROP      || '업체';       
 const POE_PROP          = process.env.POE_PROP          || 'POE';        
@@ -21,10 +20,7 @@ const FORMULA_PROP      = process.env.FORMULA_PROP      || '계산식';
 const DISPLAY_TYPE_PROP = process.env.DISPLAY_TYPE_PROP || '표시타입'; 
 const CURRENCY_PROP     = '통화';
 
-// [destination.js 로직] 1~28 CBM 직접 입력 속성명 배열 생성
-const CBM_DIRECT_PROPS = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
-
-// CONSOLE 및 순서 정렬용
+const CBM_DIRECT_PROPS  = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
 const MIN_COST_PROP     = process.env.MIN_COST_PROP    || 'MIN COST';
 const MIN_CBM_PROP      = process.env.MIN_CBM_PROP     || 'MIN CBM';
 const PER_COST_PROP     = process.env.PER_COST_PROP    || 'PER CBM';
@@ -35,10 +31,7 @@ const ORDER_PROP        = process.env.ORDER_PROP       || '순서';
 // ────────────────────────────────
 function loadDbMap() {
   const full = path.join(process.cwd(), 'config', 'db-map.json');
-  try {
-    const raw = fs.readFileSync(full, 'utf8');
-    return JSON.parse(raw);
-  } catch(e) { return {}; }
+  try { return JSON.parse(fs.readFileSync(full, 'utf8')); } catch(e) { return {}; }
 }
 
 function getCountryDbIds(country) {
@@ -59,12 +52,8 @@ function notionHeaders() {
   };
 }
 
-// ────────────────────────────────
-// Notion 속성 파싱 헬퍼
-// ────────────────────────────────
 function getTextFromRich(arr) {
-  const a = Array.isArray(arr) ? arr : [];
-  return a.map(t => t?.plain_text || '').join('');
+  return (Array.isArray(arr) ? arr : []).map(t => t?.plain_text || '').join('');
 }
 
 function escapeHtml(str) {
@@ -72,19 +61,16 @@ function escapeHtml(str) {
 }
 
 function richTextToHtml(arr) {
-  const a = Array.isArray(arr) ? arr : [];
-  return a.map(t => {
+  return (Array.isArray(arr) ? arr : []).map(t => {
     if (!t) return '';
     const ann = t.annotations || {};
-    let txt = escapeHtml(t.plain_text || '');
-    txt = txt.replace(/\n/g, '<br>');
+    let txt = escapeHtml(t.plain_text || '').replace(/\n/g, '<br>');
     if (ann.bold) txt = `<strong>${txt}</strong>`;
     if (ann.italic) txt = `<em>${txt}</em>`;
     if (ann.underline) txt = `<u>${txt}</u>`;
     if (ann.strikethrough) txt = `<s>${txt}</s>`;
     if (ann.code) txt = `<code>${txt}</code>`;
-    const href = t.href || t.text?.link?.url;
-    if (href) txt = `<a href="${String(href).replace(/"/g, '&quot;')}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+    if (t.href || t.text?.link?.url) txt = `<a href="${String(t.href || t.text?.link?.url).replace(/"/g, '&quot;')}" target="_blank">${txt}</a>`;
     return txt;
   }).join('');
 }
@@ -105,9 +91,17 @@ function getTitle(props, key) {
   return '';
 }
 
+// ✨ 누락되었던 수식 텍스트 추출 함수 복구
+function getFormulaText(props, key) {
+  const col = props?.[key];
+  if (!col) return '';
+  if (col.type === 'rich_text') return getTextFromRich(col.rich_text);
+  if (col.type === 'title') return getTextFromRich(col.title);
+  return String(col?.plain_text || '');
+}
+
 function getSelectName(prop) { return prop?.select?.name || ''; }
 function getMultiSelectNames(prop) { return (prop?.multi_select || []).map(o => o?.name).filter(Boolean); }
-
 function getNumberFromProp(prop) {
   if (!prop) return undefined;
   if (typeof prop === 'number') return prop;
@@ -117,14 +111,12 @@ function getNumberFromProp(prop) {
 }
 
 // ────────────────────────────────
-// [금액 계산 로직] destination.js의 1~28 및 29+ 로직 완전 통합
+// 금액 기본 계산 로직 (1~28 CBM 등)
 // ────────────────────────────────
 function getDirectCbmAmount(props, cbm) {
   if (!Number.isFinite(cbm) || cbm < 1 || cbm > 28) return undefined;
-  // CBM_DIRECT_PROPS 배열에 정의된 속성 키와 일치하는지 확인
   const cbmKey = Math.floor(cbm).toString();
-  const prop = props[cbmKey];
-  const val = getNumberFromProp(prop);
+  const val = getNumberFromProp(props[cbmKey]);
   return Number.isFinite(val) ? val : undefined;
 }
 
@@ -137,31 +129,167 @@ function calcConsoleAmount(props, cbm) {
   return minCost + (cbm - minCbm) * perCost;
 }
 
+// ────────────────────────────────
+// ✨ 수식(Formula) 엔진 완벽 복구 영역 ✨
+// ────────────────────────────────
+function evalFormula(code, context) {
+  if (!code) return undefined;
+  let expr = String(code).trim();
+  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,<>?=:]+$/i;
+  if (!safe.test(expr)) return undefined;
+  
+  const cbmVal = Number(context?.cbm ?? 0);
+  expr = expr.replace(/CBM/gi, String(cbmVal));
+  expr = expr.replace(/MAX/gi, 'Math.max');
+  expr = expr.replace(/MIN/gi, 'Math.min');
+  
+  try {
+    const fn = new Function('"use strict"; return (' + expr + ');');
+    const val = fn();
+    return Number.isFinite(val) ? val : undefined;
+  } catch (e) { return undefined; }
+}
+
+function evalRangeFormula(code, cbm) {
+  if (!code) return undefined;
+  let clean = code.trim();
+  
+  while (clean.startsWith('(') && clean.endsWith(')')) {
+    let depth = 0, isPair = true;
+    for (let i = 0; i < clean.length - 1; i++) {
+      if (clean[i] === '(') depth++;
+      else if (clean[i] === ')') depth--;
+      if (depth === 0) { isPair = false; break; }
+    }
+    if (isPair) clean = clean.slice(1, -1).trim();
+    else break;
+  }
+
+  const lines = clean.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  
+  for (const line of lines) {
+    const safeLine = line.replace(/^\(+|\)+$/g, '').trim();
+
+    let m = safeLine.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
+    if (m) {
+      if (cbm >= Number(m[1]) && cbm <= Number(m[2])) return evalFormula(m[3].trim(), { cbm });
+      continue;
+    }
+
+    m = safeLine.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
+    if (m) {
+      const op = m[1], num = Number(m[2]), valExpr = m[3].trim();
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+      if (match) return evalFormula(valExpr, { cbm });
+      continue;
+    }
+
+    m = safeLine.match(/^IF\s+CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s+THEN\s+(\d+)/i);
+    if (m) {
+      const op = m[1], num = Number(m[2]), val = Number(m[3]);
+      let match = false;
+      if (op === '<' && cbm < num) match = true;
+      else if (op === '>' && cbm > num) match = true;
+      else if ((op === '<=' || op === '≤') && cbm <= num) match = true;
+      else if ((op === '>=' || op === '≥') && cbm >= num) match = true;
+      if (match) return val;
+      continue;
+    }
+
+    m = safeLine.match(/^ELSE\s+(\d+)/i);
+    if (m) return Number(m[1]);
+  }
+  return undefined;
+}
+
+function applyRegionFormula(code, selectedRegion, baseAmount, cbm) {
+  if (!code) return code;
+  let expr = String(code).replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  const regionVal = (selectedRegion || '').trim();
+  const defaultVal = Number.isFinite(baseAmount) ? baseAmount : 0;
+  expr = expr.replace(/\bDEFAULT\b/gi, String(defaultVal));
+  
+  const ifRegex = /IF\(\s*REGION\s*=\s*("([^"]*)"|'([^']*)')\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/i;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    expr = expr.replace(ifRegex, function (match, quoted, dbl, sgl, thenPart, elsePart) {
+      changed = true;
+      const target = (dbl || sgl || '').trim();
+      const cond = regionVal && regionVal === target;
+      return cond ? '(' + thenPart.trim() + ')' : '(' + elsePart.trim() + ')';
+    });
+  }
+  return expr;
+}
+
+function applyTypeFormula(code, currentType) {
+  if (!code) return code;
+  let expr = String(code);
+  const typeVal = (currentType || '').toUpperCase();
+  
+  while (true) {
+    const match = expr.match(/IF\(\s*TYPE\s*=\s*(?:'([^']*)'|"([^"]*)")\s*,/i);
+    if (!match) break;
+    
+    const startIndex = match.index;
+    const targetType = (match[1] || match[2] || '').toUpperCase();
+    
+    let depth = 0; let splitIndex = -1; let endIndex = -1;
+    const scanStart = startIndex + match[0].length;
+    
+    for (let i = scanStart; i < expr.length; i++) {
+      if (expr[i] === '(') depth++;
+      else if (expr[i] === ')') {
+        if (depth === 0) { endIndex = i; break; }
+        depth--;
+      } else if (expr[i] === ',' && depth === 0) {
+        if (splitIndex === -1) splitIndex = i;
+      }
+    }
+    if (endIndex === -1) break; 
+    
+    let thenPart = '', elsePart = '';
+    if (splitIndex !== -1) {
+      thenPart = expr.substring(scanStart, splitIndex);
+      elsePart = expr.substring(splitIndex + 1, endIndex);
+    } else {
+      thenPart = expr.substring(scanStart, endIndex);
+    }
+    
+    const replacement = (typeVal === targetType) ? `(${thenPart})` : `(${elsePart})`;
+    expr = expr.substring(0, startIndex) + replacement + expr.substring(endIndex + 1);
+  }
+  return expr;
+}
+
 function computeAmount(props, type, cbm, selectedRegion) {
-  // 1순위: 1~28 CBM 직접 입력 (destination.js 로직)
+  let amount;
+
   const directAmount = getDirectCbmAmount(props, cbm);
   if (directAmount !== undefined) return directAmount;
 
-  // 2순위: CBM 29 이상일 때 (destination.js 로직)
   if (cbm > 28) {
     const val28 = getNumberFromProp(props['28']);
     const perCost = getNumberFromProp(props[PER_COST_PROP]);
     if (Number.isFinite(val28) && Number.isFinite(perCost)) return val28 + (cbm - 28) * perCost;
   }
 
-  // 3순위: 컨테이너별/CONSOLE 기본 계산
   const val20 = getNumberFromProp(props['20FT']);
   const val40 = getNumberFromProp(props['40HC']);
   const consoleAmt = calcConsoleAmount(props, cbm);
   const hasBaseCost = Number.isFinite(val20) || Number.isFinite(val40) || Number.isFinite(consoleAmt);
 
-  let amount;
   if (type === '20FT') amount = val20 ?? consoleAmt;
   else if (type === '40HC') amount = val40 ?? consoleAmt;
   else amount = consoleAmt;
 
-  // 4순위: 계산식(Formula) 적용 (destination.js의 강화된 파싱 적용)
-  const rawFormula = getTitle(props, FORMULA_PROP);
+  // ✨ 복구된 수식엔진 적용 
+  const rawFormula = getFormulaText(props, FORMULA_PROP);
   const shouldUseFormula = rawFormula && (!hasBaseCost || /REGION\b|DEFAULT\b|TYPE\b/i.test(rawFormula));
 
   if (shouldUseFormula) {
@@ -171,62 +299,8 @@ function computeAmount(props, type, cbm, selectedRegion) {
     if (!Number.isFinite(v)) v = evalFormula(code, { cbm });
     if (Number.isFinite(v)) amount = v;
   }
+  
   return amount;
-}
-
-// ────────────────────────────────
-// 수식 처리 엔진
-// ────────────────────────────────
-function evalFormula(code, context) {
-  if (!code) return undefined;
-  let expr = String(code).trim();
-  const safe = /^[0-9+\-*/().\sCBMcbmMAXMIN,<>?=:]+$/i;
-  if (!safe.test(expr.replace(/Math\.(max|min)/g, ''))) return undefined;
-  expr = expr.replace(/CBM/gi, String(Number(context?.cbm ?? 0))).replace(/MAX/gi, 'Math.max').replace(/MIN/gi, 'Math.min');
-  try { return new Function('"use strict"; return (' + expr + ');')(); } catch (e) { return undefined; }
-}
-
-function evalRangeFormula(code, cbm) {
-  if (!code) return undefined;
-  let clean = code.trim();
-  while (clean.startsWith('(') && clean.endsWith(')')) {
-    let depth = 0, isPair = true;
-    for (let i = 0; i < clean.length - 1; i++) {
-      if (clean[i] === '(') depth++; else if (clean[i] === ')') depth--;
-      if (depth === 0) { isPair = false; break; }
-    }
-    if (isPair) clean = clean.slice(1, -1).trim(); else break;
-  }
-  const lines = clean.split(/[\n,]+/).map(s => s.trim().replace(/^\(+|\)+$/g, '')).filter(Boolean);
-  for (const line of lines) {
-    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
-    if (m && cbm >= Number(m[1]) && cbm <= Number(m[2])) return evalFormula(m[3], { cbm });
-    m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
-    if (m) {
-      const op = m[1], num = Number(m[2]);
-      if ((op === '<' && cbm < num) || (op === '>' && cbm > num) || ((op === '<=' || op === '≤') && cbm <= num) || ((op === '>=' || op === '≥') && cbm >= num)) return evalFormula(m[3], { cbm });
-    }
-    m = line.match(/^ELSE\s+(\d+)/i); if (m) return Number(m[1]);
-  }
-  return undefined;
-}
-
-function applyRegionFormula(code, region, base, cbm) {
-  let expr = String(code).replace(/\bDEFAULT\b/gi, String(base || 0));
-  const ifRegex = /IF\(\s*REGION\s*=\s*["']([^"']*)["']\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/i;
-  while (ifRegex.test(expr)) {
-    expr = expr.replace(ifRegex, (m, target, thenP, elseP) => (region === target ? thenP : elseP));
-  }
-  return expr;
-}
-
-function applyTypeFormula(code, type) {
-  let expr = String(code);
-  const ifRegex = /IF\(\s*TYPE\s*=\s*["']([^"']*)["']\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/i;
-  while (ifRegex.test(expr)) {
-    expr = expr.replace(ifRegex, (m, target, thenP, elseP) => (type.toUpperCase() === target.toUpperCase() ? thenP : elseP));
-  }
-  return expr;
 }
 
 // ────────────────────────────────
