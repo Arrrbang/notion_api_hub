@@ -96,7 +96,7 @@ module.exports = function registerPoeCostsRoutes(app) {
           poeList: getMultiSelectNames(props["POE"]),
           cost20DR: getRollupNumber(props["20DR"]),
           cost40HC: getRollupNumber(props["40HC"]),
-          validity: getRollupDate(props["VALIDITY"]),
+          validity: getDateProperty(props["VALIDITY"]),
           remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
       });
