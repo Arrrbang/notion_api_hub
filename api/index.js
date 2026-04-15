@@ -20,6 +20,7 @@ const registerSalesHomeRoutes = require('./home/home-sales');
 const registerOpsHomeRoutes = require('./home/home-ops');
 const registerHomeNoticeRoutes = require('./home/notice');
 const registerTrcRoutes         = require('./trc/cal');
+const registerPoeCostsRoutes    = require('./ofc/ofc-costs');
 
 const app = express();
 app.use(cors());
@@ -98,6 +99,7 @@ registerSalesHomeRoutes(app);
 registerOpsHomeRoutes(app);
 registerHomeNoticeRoutes(app);
 registerTrcRoutes(app);
+registerPoeCostsRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
