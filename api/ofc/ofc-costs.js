@@ -1,23 +1,16 @@
-// api/destination/poe-costs.js
+// api/ofc/ofc-costs.js
 const axios = require("axios");
+
+// [1] 같은 경로(api/ofc/)에 있는 매핑 JSON 파일 불러오기
+const poeMapping = require("./poe-mapping.json");
 
 const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05";
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
-// [1] 프론트엔드 입력값 -> 노션 POE 매핑 JSON
-// 필요에 따라 추가/수정해서 사용하시면 됩니다.
-const poeMapping = {
-  "LA": "USLAX",
-  "NEW YORK": "USNYC",
-  "LONG BEACH": "USLGB",
-  "CHICAGO": "USCHI",
-  "SEATTLE": "USSEA"
-};
-
 // ───────────────────────── 공통 유틸 ─────────────────────────
 
 function notionHeaders() {
-  if (!NOTION_TOKEN) throw new Error("NOTION_API_KEY is missing");
+  if (!NOTION_TOKEN) throw new Error("NOTION_API_KEY (또는 NOTION_TOKEN) is missing");
   return {
     Authorization: `Bearer ${NOTION_TOKEN}`,
     "Content-Type": "application/json",
@@ -25,11 +18,12 @@ function notionHeaders() {
   };
 }
 
+// 텍스트 속성 추출기
 function richTextToPlain(rich = []) {
   return rich.map(r => r.plain_text || "").join("").trim();
 }
 
-// 롤업 속성(Number) 추출기 (원본 표시 vs 계산 값 모두 대응)
+// 롤업 속성(Number) 추출기
 function getRollupNumber(prop) {
   if (!prop || prop.type !== "rollup" || !prop.rollup) return null;
   const r = prop.rollup;
@@ -65,16 +59,17 @@ module.exports = function registerPoeCostsRoutes(app) {
   
   app.get("/api/destination/poe-costs", async (req, res) => {
     try {
+      // 1. 프론트엔드에서 전달받은 POE 값 확인
       const frontPoe = (req.query.poe || "").trim().toUpperCase();
 
       if (!frontPoe) {
         return res.status(400).json({ ok: false, error: "POE를 입력하세요. (예: LA)" });
       }
 
-      // [2] 매핑된 값 찾기 (없으면 입력값 그대로 사용)
+      // 2. JSON 매핑 적용 (매핑 파일에 없으면 입력값 그대로 사용)
       const targetPoe = poeMapping[frontPoe] || frontPoe;
 
-      // [3] 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함(contains)되어 있는지 확인
+      // 3. 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함(contains)되어 있는지 확인
       const body = {
         filter: {
           property: "POE",
@@ -99,8 +94,7 @@ module.exports = function registerPoeCostsRoutes(app) {
         });
       }
 
-      // [4] 데이터 정제
-      // 다중 선택 속성 특성상 여러 개가 조회될 수 있으므로 배열 형태로 반환합니다.
+      // 4. 데이터 정제 후 반환
       const parsedData = results.map(page => {
         const props = page.properties;
 
