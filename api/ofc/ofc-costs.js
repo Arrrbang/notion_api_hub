@@ -57,7 +57,7 @@ function getMultiSelectNames(prop) {
 
 module.exports = function registerPoeCostsRoutes(app) {
   
-  app.get("/api/destination/poe-costs", async (req, res) => {
+  app.get("/api/ofc/ofc-costs", async (req, res) => {
     try {
       // 1. 프론트엔드에서 전달받은 POE 값 확인
       const frontPoe = (req.query.poe || "").trim().toUpperCase();
