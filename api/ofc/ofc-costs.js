@@ -35,16 +35,9 @@ function getRollupNumber(prop) {
   return null;
 }
 
-// 롤업 속성(Date) 추출기
-function getRollupDate(prop) {
-  if (!prop || prop.type !== "rollup" || !prop.rollup) return null;
-  const r = prop.rollup;
-  if (r.type === "date" && r.date) return { start: r.date.start, end: r.date.end };
-  if (r.type === "array" && r.array.length > 0) {
-    const first = r.array[0];
-    if (first.type === "date" && first.date) return { start: first.date.start, end: first.date.end };
-  }
-  return null;
+function getDateProperty(prop) {
+  if (!prop || prop.type !== "date" || !prop.date) return null;
+  return { start: prop.date.start, end: prop.date.end };
 }
 
 // 다중 선택(Multi-select) 값 배열 추출기
