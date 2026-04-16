@@ -23,7 +23,6 @@ function richTextToPlain(rich = []) {
   return rich.map(r => r.plain_text || "").join("").trim();
 }
 
-// 롤업 속성(Number) 추출기
 function getRollupNumber(prop) {
   if (!prop || prop.type !== "rollup" || !prop.rollup) return null;
   const r = prop.rollup;
@@ -32,6 +31,13 @@ function getRollupNumber(prop) {
     const first = r.array[0];
     if (first.type === "number") return first.number;
   }
+  return null;
+}
+
+function getFormulaNumber(prop) {
+  if (!prop || prop.type !== "formula" || !prop.formula) return null;
+  const f = prop.formula;
+  if (f.type === "number") return f.number;
   return null;
 }
 
@@ -94,8 +100,8 @@ module.exports = function registerPoeCostsRoutes(app) {
         return {
           id: page.id,
           poeList: getMultiSelectNames(props["POE"]),
-          cost20DR: getRollupNumber(props["20DR"]),
-          cost40HC: getRollupNumber(props["40HC"]),
+          cost20DR: getFormulaNumber(props["20DR"]),
+          cost40HC: getFormulaNumber(props["40HC"]),
           validity: getDateProperty(props["VALIDITY"]),
           remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
