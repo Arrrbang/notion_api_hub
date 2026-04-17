@@ -5,6 +5,7 @@ const axios = require("axios");
 const poeMapping = require("./poe-mapping.json");
 
 const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05";
+const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
 // ───────────────────────── 공통 유틸 ─────────────────────────
@@ -78,15 +79,17 @@ module.exports = function registerPoeCostsRoutes(app) {
         }
       };
 
-      const resp = await axios.post(
-        `https://api.notion.com/v1/databases/${TARGET_DB_ID}/query`,
-        body,
-        { headers: notionHeaders() }
-      );
+      // Promise.all을 사용하여 두 데이터베이스를 병렬로 동시 조회 (성능 최적화)
+      const [ofcResp, extraResp] = await Promise.all([
+        axios.post(`https://api.notion.com/v1/databases/${TARGET_DB_ID}/query`, filterBody, { headers: notionHeaders() }),
+        axios.post(`https://api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() })
+      ]);
 
-      const results = resp.data.results || [];
+      const ofcResults = ofcResp.data.results || [];
+      const extraResults = extraResp.data.results || [];
       
-      if (!results.length) {
+      // 두 DB 모두에서 데이터가 없을 경우에만 404 처리
+      if (!ofcResults.length && !extraResults.length) {
         return res.status(404).json({
           ok: false,
           error: `매핑된 POE(${targetPoe})에 해당하는 데이터를 찾을 수 없습니다.`
@@ -106,11 +109,24 @@ module.exports = function registerPoeCostsRoutes(app) {
           remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
       });
+      
+      const parsedExtraCosts = extraResults.map(page => {
+        const props = page.properties;
 
+        return {
+          id: page.id,
+          // 노션의 이름(title) 속성도 rich_text와 구조가 같으므로 기존 유틸 활용 가능
+          name: richTextToPlain(props["항목명"]?.title || []), 
+          amount: props["금액"]?.number || 0
+        };
+      });
+
+      // 프론트엔드로 두 개의 데이터 배열을 분리하여 전달
       return res.json({
         ok: true,
         input: { frontPoe, targetPoe },
-        data: parsedData
+        ofcData: parsedOfcData,       // 기존 메인 데이터
+        extraCosts: parsedExtraCosts  // 추가 비용 데이터 (프론트에서 합산 용도)
       });
 
     } catch (e) {
