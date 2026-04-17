@@ -4,8 +4,8 @@ const axios = require("axios");
 // [1] 같은 경로(api/ofc/)에 있는 매핑 JSON 파일 불러오기
 const poeMapping = require("./poe-mapping.json");
 
-const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05";
-const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";
+const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05"; // 기존 OFC 데이터베이스
+const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";  // 추가 비용 데이터베이스
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
 // ───────────────────────── 공통 유틸 ─────────────────────────
@@ -19,22 +19,18 @@ function notionHeaders() {
   };
 }
 
-// 텍스트 속성 추출기
+// 텍스트 속성 및 이름(title) 속성 추출기
 function richTextToPlain(rich = []) {
   return rich.map(r => r.plain_text || "").join("").trim();
 }
 
-function getRollupNumber(prop) {
-  if (!prop || prop.type !== "rollup" || !prop.rollup) return null;
-  const r = prop.rollup;
-  if (r.type === "number") return r.number;
-  if (r.type === "array" && r.array.length > 0) {
-    const first = r.array[0];
-    if (first.type === "number") return first.number;
-  }
-  return null;
+// 다중 선택(Multi-select) 값 배열 추출기
+function getMultiSelectNames(prop) {
+  if (!prop || prop.type !== "multi_select" || !prop.multi_select) return [];
+  return prop.multi_select.map(item => item.name);
 }
 
+// 수식(Formula) 속성 추출기 (추가됨)
 function getFormulaNumber(prop) {
   if (!prop || prop.type !== "formula" || !prop.formula) return null;
   const f = prop.formula;
@@ -42,15 +38,10 @@ function getFormulaNumber(prop) {
   return null;
 }
 
+// 일반 날짜(Date) 속성 추출기 (추가됨)
 function getDateProperty(prop) {
   if (!prop || prop.type !== "date" || !prop.date) return null;
   return { start: prop.date.start, end: prop.date.end };
-}
-
-// 다중 선택(Multi-select) 값 배열 추출기
-function getMultiSelectNames(prop) {
-  if (!prop || prop.type !== "multi_select" || !prop.multi_select) return [];
-  return prop.multi_select.map(item => item.name);
 }
 
 // ───────────────────────── 라우트 등록 ─────────────────────────
@@ -70,7 +61,7 @@ module.exports = function registerPoeCostsRoutes(app) {
       const targetPoe = poeMapping[frontPoe] || frontPoe;
 
       // 3. 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함(contains)되어 있는지 확인
-      const body = {
+      const filterBody = {
         filter: {
           property: "POE",
           multi_select: {
@@ -79,7 +70,7 @@ module.exports = function registerPoeCostsRoutes(app) {
         }
       };
 
-      // Promise.all을 사용하여 두 데이터베이스를 병렬로 동시 조회 (성능 최적화)
+      // Promise.all을 사용하여 두 데이터베이스를 병렬로 동시 조회
       const [ofcResp, extraResp] = await Promise.all([
         axios.post(`https://api.notion.com/v1/databases/${TARGET_DB_ID}/query`, filterBody, { headers: notionHeaders() }),
         axios.post(`https://api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() })
@@ -96,26 +87,26 @@ module.exports = function registerPoeCostsRoutes(app) {
         });
       }
 
-      // 4. 데이터 정제 후 반환
-      const parsedData = results.map(page => {
+      // 4. 기존 OFC 데이터 정제 (최신 추출기 함수 적용)
+      const parsedOfcData = ofcResults.map(page => {
         const props = page.properties;
 
         return {
           id: page.id,
           poeList: getMultiSelectNames(props["POE"]),
-          cost20DR: getFormulaNumber(props["20DR"]),
-          cost40HC: getFormulaNumber(props["40HC"]),
-          validity: getDateProperty(props["VALIDITY"]),
+          cost20DR: getFormulaNumber(props["20DR"]),      // Rollup -> Formula로 변경
+          cost40HC: getFormulaNumber(props["40HC"]),      // Rollup -> Formula로 변경
+          validity: getDateProperty(props["VALIDITY"]),   // Rollup Date -> Date로 변경
           remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
       });
-      
+
+      // 5. 추가 비용(Extra Costs) 데이터 정제
       const parsedExtraCosts = extraResults.map(page => {
         const props = page.properties;
 
         return {
           id: page.id,
-          // 노션의 이름(title) 속성도 rich_text와 구조가 같으므로 기존 유틸 활용 가능
           name: richTextToPlain(props["항목명"]?.title || []), 
           amount: props["금액"]?.number || 0
         };
@@ -125,8 +116,8 @@ module.exports = function registerPoeCostsRoutes(app) {
       return res.json({
         ok: true,
         input: { frontPoe, targetPoe },
-        ofcData: parsedOfcData,       // 기존 메인 데이터
-        extraCosts: parsedExtraCosts  // 추가 비용 데이터 (프론트에서 합산 용도)
+        ofcData: parsedOfcData,       
+        extraCosts: parsedExtraCosts  
       });
 
     } catch (e) {
