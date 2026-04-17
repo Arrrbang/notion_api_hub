@@ -30,7 +30,7 @@ function getMultiSelectNames(prop) {
   return prop.multi_select.map(item => item.name);
 }
 
-// 수식(Formula) 속성 추출기 (추가됨)
+// 수식(Formula) 속성 추출기 (첫 번째 DB용)
 function getFormulaNumber(prop) {
   if (!prop || prop.type !== "formula" || !prop.formula) return null;
   const f = prop.formula;
@@ -38,7 +38,7 @@ function getFormulaNumber(prop) {
   return null;
 }
 
-// 일반 날짜(Date) 속성 추출기 (추가됨)
+// 일반 날짜(Date) 속성 추출기 (첫 번째 DB용)
 function getDateProperty(prop) {
   if (!prop || prop.type !== "date" || !prop.date) return null;
   return { start: prop.date.start, end: prop.date.end };
@@ -57,10 +57,10 @@ module.exports = function registerPoeCostsRoutes(app) {
         return res.status(400).json({ ok: false, error: "POE를 입력하세요. (예: LA)" });
       }
 
-      // 2. JSON 매핑 적용 (매핑 파일에 없으면 입력값 그대로 사용)
+      // 2. JSON 매핑 적용
       const targetPoe = poeMapping[frontPoe] || frontPoe;
 
-      // 3. 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함(contains)되어 있는지 확인
+      // 3. 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함되어 있는지 확인
       const filterBody = {
         filter: {
           property: "POE",
@@ -87,18 +87,15 @@ module.exports = function registerPoeCostsRoutes(app) {
         });
       }
 
-      // 4. 기존 OFC 데이터 정제 (최신 추출기 함수 적용 및 소수점 제거)
+      // 4. 기존 OFC 데이터 정제
       const parsedOfcData = ofcResults.map(page => {
         const props = page.properties;
-        
-        // 원본 숫자 가져오기
         const raw20DR = getFormulaNumber(props["20DR"]);
         const raw40HC = getFormulaNumber(props["40HC"]);
 
         return {
           id: page.id,
           poeList: getMultiSelectNames(props["POE"]),
-          // 값이 존재할 경우 Math.round()를 통해 소수점 반올림(정수화) 처리
           cost20DR: raw20DR !== null ? Math.round(raw20DR) : null,
           cost40HC: raw40HC !== null ? Math.round(raw40HC) : null,
           validity: getDateProperty(props["VALIDITY"]),   
@@ -106,18 +103,19 @@ module.exports = function registerPoeCostsRoutes(app) {
         };
       });
 
-      // 5. 추가 비용(Extra Costs) 데이터 정제 (소수점 제거)
+      // 5. 추가 비용(Extra Costs) 데이터 정제 (20DR, 40HC 두 개 추출)
       const parsedExtraCosts = extraResults.map(page => {
         const props = page.properties;
         
         // 원본 추가 금액 가져오기
-        const rawAmount = props["금액"]?.number || 0;
+        const raw20 = props["20DR"]?.number || 0;
+        const raw40 = props["40HC"]?.number || 0;
 
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
-          // Math.round()를 통해 소수점 반올림(정수화) 처리
-          amount: Math.round(rawAmount)
+          cost20: Math.round(raw20),
+          cost40: Math.round(raw40)
         };
       });
 
