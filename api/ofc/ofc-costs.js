@@ -87,28 +87,37 @@ module.exports = function registerPoeCostsRoutes(app) {
         });
       }
 
-      // 4. 기존 OFC 데이터 정제 (최신 추출기 함수 적용)
+      // 4. 기존 OFC 데이터 정제 (최신 추출기 함수 적용 및 소수점 제거)
       const parsedOfcData = ofcResults.map(page => {
         const props = page.properties;
+        
+        // 원본 숫자 가져오기
+        const raw20DR = getFormulaNumber(props["20DR"]);
+        const raw40HC = getFormulaNumber(props["40HC"]);
 
         return {
           id: page.id,
           poeList: getMultiSelectNames(props["POE"]),
-          cost20DR: getFormulaNumber(props["20DR"]),      // Rollup -> Formula로 변경
-          cost40HC: getFormulaNumber(props["40HC"]),      // Rollup -> Formula로 변경
-          validity: getDateProperty(props["VALIDITY"]),   // Rollup Date -> Date로 변경
+          // 값이 존재할 경우 Math.round()를 통해 소수점 반올림(정수화) 처리
+          cost20DR: raw20DR !== null ? Math.round(raw20DR) : null,
+          cost40HC: raw40HC !== null ? Math.round(raw40HC) : null,
+          validity: getDateProperty(props["VALIDITY"]),   
           remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
       });
 
-      // 5. 추가 비용(Extra Costs) 데이터 정제
+      // 5. 추가 비용(Extra Costs) 데이터 정제 (소수점 제거)
       const parsedExtraCosts = extraResults.map(page => {
         const props = page.properties;
+        
+        // 원본 추가 금액 가져오기
+        const rawAmount = props["금액"]?.number || 0;
 
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
-          amount: props["금액"]?.number || 0
+          // Math.round()를 통해 소수점 반올림(정수화) 처리
+          amount: Math.round(rawAmount)
         };
       });
 
