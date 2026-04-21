@@ -1,256 +1,141 @@
-/* ==========================================================================
-   one-click-quo/one_click_quo_ofc.js
-   해상 운임(OFC) 비용 조회 및 랜더링 로직 (추가 비용 합산 및 환율 적용 기능 포함)
-   ========================================================================== */
+// api/ofc/ofc-costs.js
+const axios = require("axios");
 
-/**
- * 1. [핵심 모듈] OFC 비용 및 추가 비용 API 호출 함수 
- */
-async function fetchOceanFreightData(poe) {
-    if (!poe) return null;
+// [1] 같은 경로(api/ofc/)에 있는 매핑 JSON 파일 불러오기
+const poeMapping = require("./poe-mapping.json");
 
+const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05"; // 기존 OFC 데이터베이스
+const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";  // 추가 비용 데이터베이스
+const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
+
+// ───────────────────────── 공통 유틸 ─────────────────────────
+
+function notionHeaders() {
+  if (!NOTION_TOKEN) throw new Error("NOTION_API_KEY (또는 NOTION_TOKEN) is missing");
+  return {
+    Authorization: `Bearer ${NOTION_TOKEN}`,
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+  };
+}
+
+// 텍스트 속성 및 이름(title) 속성 추출기
+function richTextToPlain(rich = []) {
+  return rich.map(r => r.plain_text || "").join("").trim();
+}
+
+// 다중 선택(Multi-select) 값 배열 추출기
+function getMultiSelectNames(prop) {
+  if (!prop || prop.type !== "multi_select" || !prop.multi_select) return [];
+  return prop.multi_select.map(item => item.name);
+}
+
+// 수식(Formula) 속성 추출기 (첫 번째 DB용)
+function getFormulaNumber(prop) {
+  if (!prop || prop.type !== "formula" || !prop.formula) return null;
+  const f = prop.formula;
+  if (f.type === "number") return f.number;
+  return null;
+}
+
+// 일반 날짜(Date) 속성 추출기 (첫 번째 DB용)
+function getDateProperty(prop) {
+  if (!prop || prop.type !== "date" || !prop.date) return null;
+  return { start: prop.date.start, end: prop.date.end };
+}
+
+// ───────────────────────── 라우트 등록 ─────────────────────────
+
+module.exports = function registerPoeCostsRoutes(app) {
+  
+  app.get("/api/ofc/ofc-costs", async (req, res) => {
     try {
-        const response = await fetch(`https://notion-api-hub.vercel.app/api/ofc/ofc-costs?poe=${encodeURIComponent(poe)}`);
-        const result = await response.json();
+      // 1. 프론트엔드에서 전달받은 POE 값 확인
+      const frontPoe = (req.query.poe || "").trim().toUpperCase();
 
-        if (!result.ok || (!result.ofcData?.length && !result.extraCosts?.length)) {
-            return null;
+      if (!frontPoe) {
+        return res.status(400).json({ ok: false, error: "POE를 입력하세요. (예: LA)" });
+      }
+
+      // 2. JSON 매핑 적용
+      const targetPoe = poeMapping[frontPoe] || frontPoe;
+
+      // 3. 노션 쿼리 필터: POE 다중 선택 속성에 targetPoe가 포함되어 있는지 확인
+      const filterBody = {
+        filter: {
+          property: "POE",
+          multi_select: {
+            contains: targetPoe
+          }
         }
+      };
+
+      // Promise.all을 사용하여 두 데이터베이스를 병렬로 동시 조회
+      const [ofcResp, extraResp] = await Promise.all([
+        axios.post(`https://api.notion.com/v1/databases/${TARGET_DB_ID}/query`, filterBody, { headers: notionHeaders() }),
+        axios.post(`https://api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() })
+      ]);
+
+      const ofcResults = ofcResp.data.results || [];
+      const extraResults = extraResp.data.results || [];
+      
+      // 두 DB 모두에서 데이터가 없을 경우에만 404 처리
+      if (!ofcResults.length && !extraResults.length) {
+        return res.status(404).json({
+          ok: false,
+          error: `매핑된 POE(${targetPoe})에 해당하는 데이터를 찾을 수 없습니다.`
+        });
+      }
+
+      // 4. 기존 OFC 데이터 정제
+      const parsedOfcData = ofcResults.map(page => {
+        const props = page.properties;
+        const raw20DR = getFormulaNumber(props["20DR"]);
+        const raw40HC = getFormulaNumber(props["40HC"]);
 
         return {
-            ofcData: result.ofcData && result.ofcData.length > 0 ? result.ofcData[0] : null,
-            extraCosts: result.extraCosts || []
+          id: page.id,
+          poeList: getMultiSelectNames(props["POE"]),
+          cost20DR: raw20DR !== null ? Math.round(raw20DR) : null,
+          cost40HC: raw40HC !== null ? Math.round(raw40HC) : null,
+          validity: getDateProperty(props["VALIDITY"]),   
+          remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
         };
-    } catch (error) {
-        console.error("OFC 데이터 조회 중 에러 발생:", error);
-        return null;
-    }
-}
+      });
 
-/**
- * 2. [UI 로직] 원클릭 견적서 화면에 OFC 비용 적용 및 환율 변환
- */
-async function applyOfcCostToQuote() {
-    const rawData = sessionStorage.getItem('oneClickQuoteData');
-    if (!rawData) return;
-    
-    const data = JSON.parse(rawData);
-    let poe = data.poe || data.location; 
-    if (poe && poe.includes('/')) {
-        poe = poe.split('/')[1].trim(); 
-    }
-    const containerType = (data.type || data.cargo || '').toUpperCase(); 
-
-    // ✨ 1. CBM 숫자 추출 (CONSOLE 비례 계산용)
-    const cbmString = document.getElementById('sumCbmType') ? document.getElementById('sumCbmType').textContent : '1';
-    const cbmMatch = cbmString.match(/(\d+(\.\d+)?)\s*CBM/i);
-    const cbm = cbmMatch ? parseFloat(cbmMatch[1]) : 1; 
-
-    const ofcDisplayEl = document.getElementById('q_ocean_ofc');
-    const surchargeDisplayEl = document.getElementById('q_ocean_surcharge');
-    const oceanTotalEl = document.getElementById('q_ocean_total');
-    const ofcCardEl = ofcDisplayEl.parentElement; 
-    
-    ofcDisplayEl.textContent = "조회 중...";
-    if(surchargeDisplayEl) surchargeDisplayEl.textContent = "조회 중...";
-
-    // 1) 부대비용 산출 로직 (20피트: 25만 / 40HC: 30만 / CONSOLE: 40HC기준 비례계산)
-    let surchargeKrw = 0;
-    if (containerType.includes('20')) {
-        surchargeKrw = 250000;
-    } else if (containerType.includes('40')) {
-        surchargeKrw = 300000;
-    } else if (containerType.includes('CONSOLE')) {
-        // 👈 요청하신 CONSOLE 부대비용 비례 계산: 30만을 50으로 나눈 뒤 CBM을 곱함
-        surchargeKrw = Math.round((300000 / 50) * cbm);
-    }
-
-    // 2) OFC 노션 DB와 환율 API 동시 호출!
-    const [result, exRes] = await Promise.all([
-        fetchOceanFreightData(poe),
-        fetch('https://api.exchangerate-api.com/v4/latest/KRW').catch(() => null)
-    ]);
-
-    // 환율 파싱 (KRW -> USD) - 실패 시 기본 환율 방어코드
-    let krwToUsdRate = 0.00075; 
-    if (exRes && exRes.ok) {
-        try {
-            const exData = await exRes.json();
-            if (exData?.rates?.USD) krwToUsdRate = exData.rates.USD;
-        } catch(e) {
-            console.warn("환율 API 파싱 실패", e);
-        }
-    }
-
-    let baseCost = 0;       
-    let extraTotal = 0;     
-    let finalCost = null;   
-    let ofcPageId = null;   
-    let validityDate = "";  
-
-    if (result) {
-        let { ofcData, extraCosts } = result;
-
-        // 메인 운임 및 적용일 추출
-        if (ofcData) {
-            ofcPageId = ofcData.id;
-            if (containerType.includes('20')) {
-                baseCost = ofcData.cost20DR || 0;
-            } else if (containerType.includes('40')) {
-                baseCost = ofcData.cost40HC || 0;
-            } else if (containerType.includes('CONSOLE')) { // 👈 여기도 .includes로 수정!
-                // ✨ 2. CONSOLE 기본 해상운임 계산: 40HC 운임을 50으로 나눈 뒤 CBM 곱함
-                const hcCost = ofcData.cost40HC || 0;
-                baseCost = Math.round((hcCost / 50) * cbm); 
-            }
-
-            if (ofcData.validity) {
-                const rawDate = ofcData.validity.end || ofcData.validity.start;
-                if (rawDate) {
-                    validityDate = rawDate.replace(/-/g, '/');
-                }
-            }
-        }
+      // 5. 추가 비용(Extra Costs) 데이터 정제 (20DR, 40HC 두 개 추출)
+      const parsedExtraCosts = extraResults.map(page => {
+        const props = page.properties;
         
-        // 추가 비용 추출 (컨테이너 타입에 맞게 매핑)
-        if (extraCosts && extraCosts.length > 0) {
-            extraTotal = extraCosts.reduce((sum, item) => {
-                let currentAmt = 0;
-                if (containerType.includes('20')) {
-                    currentAmt = item.cost20 || 0;
-                } else if (containerType.includes('40')) {
-                    currentAmt = item.cost40 || 0;
-                } else if (containerType.includes('CONSOLE')) { // 👈 여기도 .includes로 수정!
-                    // ✨ 3. CONSOLE 추가 운임은 백엔드 값 그대로 가져오기
-                    currentAmt = item.costCONSOLE || 0;
-                }
-                
-                item.amount = currentAmt;
-                return sum + currentAmt;
-            }, 0);
-            
-            result.extraCosts = extraCosts.filter(item => item.amount > 0);
-        }
+        // 원본 추가 금액 가져오기
+        const raw20 = props["20DR"]?.number || 0;
+        const raw40 = props["40HC"]?.number || 0;
+        const rawCONSOLE = props["CONSOLE"]?.number || 0;
 
-        if (ofcData || extraCosts.length > 0) {
-            finalCost = baseCost + extraTotal;
-        }
+        return {
+          id: page.id,
+          name: richTextToPlain(props["항목명"]?.title || []), 
+          cost20: Math.round(raw20),
+          cost40: Math.round(raw40),
+          costCONSOLE: Math.round(rawCONSOLE)
+        };
+      });
+
+      // 프론트엔드로 두 개의 데이터 배열을 분리하여 전달
+      return res.json({
+        ok: true,
+        input: { frontPoe, targetPoe },
+        ofcData: parsedOfcData,       
+        extraCosts: parsedExtraCosts  
+      });
+
+    } catch (e) {
+      console.error("poe-costs error:", e.response?.data || e.message);
+      res.status(500).json({
+        ok: false,
+        error: "노션 데이터베이스 조회 중 오류가 발생했습니다.",
+        details: e.response?.data || e.message || String(e)
+      });
     }
-
-    // 3) 금액 최종 변환 (합산)
-    let ofcUsd = finalCost || 0;
-    let surchargeUsd = surchargeKrw * krwToUsdRate; 
-    let totalOceanUsd = ofcUsd + surchargeUsd;      
-
-    // UI 업데이트
-    if (finalCost !== null && finalCost !== undefined) {
-        let validityHtml = "";
-        if (validityDate) {
-            validityHtml = `<span style="font-size: 0.85rem; color: var(--medium-gray); font-weight: 600; margin-right: 12px; letter-spacing: 0;">적용일 : ~${validityDate} 까지</span>`;
-        }
-
-        ofcDisplayEl.innerHTML = `${validityHtml}$${ofcUsd.toLocaleString('en-US')}`;
-        ofcDisplayEl.dataset.cost = finalCost; 
-
-        ofcCardEl.style.cursor = 'pointer';
-        ofcCardEl.title = "클릭하여 운임 상세 내역 확인";
-        ofcCardEl.onmouseenter = () => ofcCardEl.style.opacity = '0.8';
-        ofcCardEl.onmouseleave = () => ofcCardEl.style.opacity = '1';
-
-        ofcCardEl.onclick = () => openOfcDetailModal(ofcPageId, result.extraCosts, baseCost, finalCost, validityDate);
-    } else {
-        ofcDisplayEl.textContent = "별도 문의";
-        ofcDisplayEl.dataset.cost = 0;
-        ofcCardEl.style.cursor = 'default';
-        ofcCardEl.onclick = null; 
-    }
-
-    if (surchargeDisplayEl) {
-        surchargeDisplayEl.innerHTML = `${surchargeKrw.toLocaleString('ko-KR')}원 <span style="font-size: 0.65em; color: var(--medium-gray); font-weight:600;">($${surchargeUsd.toLocaleString('en-US', {maximumFractionDigits:2})})</span>`;
-    }
-
-    if (oceanTotalEl) {
-        oceanTotalEl.textContent = `$${totalOceanUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
-}
-
-/**
- * 3. [모달 로직] OFC 상세 운임 팝업창 생성
- */
-function openOfcDetailModal(pageId, extraCosts = [], baseCost = 0, finalCost = 0, validityDate = "") {
-    const existingModal = document.getElementById('ofc-detail-modal');
-    if (existingModal) existingModal.remove();
-
-    const modalOverlay = document.createElement('div');
-    modalOverlay.id = 'ofc-detail-modal';
-    modalOverlay.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center;
-        z-index: 9999; backdrop-filter: blur(2px);
-    `;
-
-    const notionLink = pageId ? `https://www.notion.so/${pageId.replace(/-/g, '')}` : '#';
-
-    let extraCostRows = extraCosts.map(c => `
-        <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #eee; color: #555;">${c.name}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">$${(c.amount || 0).toLocaleString('en-US')}</td>
-        </tr>
-    `).join('');
-
-    if(extraCosts.length === 0) {
-        extraCostRows = `<tr><td colspan="2" style="padding: 15px; text-align:center; color:#999;">해당 타입에 적용된 추가 운임이 없습니다.</td></tr>`;
-    }
-
-    let validityTextHtml = validityDate ? `<div style="text-align: center; color: var(--medium-gray); font-size: 0.9rem; font-weight: 600; margin-bottom: 15px;">유효 기간 : ~${validityDate} 까지</div>` : '';
-
-    const modalContent = `
-        <div style="background: #fff; padding: 25px; border-radius: 12px; width: 420px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative; animation: fadeIn 0.2s ease-in-out;">
-            <button id="closeOfcModalBtn" style="position: absolute; top: 15px; right: 15px; background: none; border: none; font-size: 24px; color: #999; cursor: pointer; line-height: 1;">&times;</button>
-            
-            <h3 style="margin: 0 0 15px 0; font-size: 18px; color: var(--deep-teal, #0d3b45); border-bottom: 2px solid var(--primary-color, #1A73E8); padding-bottom: 10px;">운임 상세 및 추가 비용</h3>
-            
-            ${validityTextHtml}
-
-            <div style="margin-bottom: 25px; text-align: center;">
-                <a href="${notionLink}" target="_blank" style="display: inline-block; background: var(--primary-color, #1A73E8); color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 15px; width: 90%; box-shadow: 0 3px 6px rgba(26,115,232,0.3); transition: background 0.2s;">
-                    🔗 포워딩/선사별 운임 상세 확인
-                </a>
-                ${!pageId ? '<p style="font-size: 12px; color: red; margin-top: 8px;">상세 페이지 정보를 불러올 수 없습니다.</p>' : ''}
-            </div>
-
-            <h4 style="margin: 0 0 10px 0; font-size: 15px; color: #333;">[운임 구성 내역]</h4>
-            <div style="border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                    <thead style="background: #f8f9fa;">
-                        <tr>
-                            <th style="padding: 10px; text-align: left; border-bottom: 1px solid #ddd; color: #555;">항목명</th>
-                            <th style="padding: 10px; text-align: right; border-bottom: 1px solid #ddd; color: #555;">금액 (USD)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td style="padding: 10px; border-bottom: 1px solid #ddd; color: #333;">OFC (기본 해상운임)</td>
-                            <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: right; font-weight: 600;">$${baseCost.toLocaleString('en-US')}</td>
-                        </tr>
-                        ${extraCostRows}
-                    </tbody>
-                    <tfoot style="background: var(--mint-white, #f0fdfa);">
-                        <tr>
-                            <td style="padding: 12px 10px; border-top: 2px solid #ddd; font-weight: bold; color: var(--deep-teal, #0d3b45);">총 합산 운임 (OFC)</td>
-                            <td style="padding: 12px 10px; border-top: 2px solid #ddd; text-align: right; font-weight: bold; color: var(--deep-teal, #0d3b45); font-size: 16px;">$${finalCost.toLocaleString('en-US')}</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-        </div>
-    `;
-
-    modalOverlay.innerHTML = modalContent;
-    document.body.appendChild(modalOverlay);
-
-    document.getElementById('closeOfcModalBtn').onclick = () => modalOverlay.remove();
-    modalOverlay.onclick = (e) => { if(e.target === modalOverlay) modalOverlay.remove(); }
-}
-
-document.addEventListener('DOMContentLoaded', applyOfcCostToQuote);
+  });
+};
