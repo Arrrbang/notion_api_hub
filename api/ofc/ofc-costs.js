@@ -110,12 +110,14 @@ module.exports = function registerPoeCostsRoutes(app) {
         // 원본 추가 금액 가져오기
         const raw20 = props["20DR"]?.number || 0;
         const raw40 = props["40HC"]?.number || 0;
+        const rawCONSOLE = props["CONSOLE"]?.number || 0;
 
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
           cost20: Math.round(raw20),
           cost40: Math.round(raw40)
+          costCONSOLE: Math.round(rawCONSOLE)
         };
       });
 
