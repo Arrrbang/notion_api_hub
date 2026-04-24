@@ -1,4 +1,4 @@
-// backend/costs.js - 통합 및 최적화 최종 버전 (유동적 CBM 계산 반영)
+// backend/costs.js - 통합 및 최적화 최종 버전 (유동적 CBM 계산 & 타입 속성 통합 반영)
 
 const fs    = require('fs');
 const path  = require('path');
@@ -9,16 +9,15 @@ const axios = require('axios');
 // ────────────────────────────────
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
-// 속성명 설정
+// 속성명 설정 (기본/추가, 표시타입 제거 및 '타입'으로 통합)
 const REGION_PROP       = process.env.REGION_PROP       || '지역';       
 const COMPANY_PROP      = process.env.COMPANY_PROP      || '업체';       
 const POE_PROP          = process.env.POE_PROP          || 'POE';        
 const CARGO_PROP        = process.env.CARGO_PROP        || '화물타입';   
-const BASIC_PROP        = process.env.BASIC_PROP        || '기본/추가';  
+const ROW_TYPE_PROP     = process.env.ROW_TYPE_PROP     || '타입';       // ✨ 통합된 속성
 const ITEM_PROP         = process.env.ITEM_PROP         || '항목';       
 const EXTRA_PROP        = process.env.EXTRA_PROP        || '참고사항';   
 const FORMULA_PROP      = process.env.FORMULA_PROP      || '계산식';     
-const DISPLAY_TYPE_PROP = process.env.DISPLAY_TYPE_PROP || '표시타입'; 
 const CURRENCY_PROP     = '통화';
 
 // 1~28 CBM 직접 입력 속성명 배열 생성
@@ -117,20 +116,18 @@ function getNumberFromProp(prop) {
 }
 
 // ────────────────────────────────
-// [금액 계산 로직] 유동적 CBM 계산기 (빈칸/초과 자동 처리)
+// [금액 계산 로직] 유동적 CBM 계산기
 // ────────────────────────────────
 function getDynamicCbmAmount(props, cbm) {
   if (!Number.isFinite(cbm)) return undefined;
 
   const perCost = getNumberFromProp(props[PER_COST_PROP]);
 
-  // 1. 노션에 정확히 해당 CBM 값(1~28)이 채워져 있다면 바로 반환
   if (cbm >= 1 && cbm <= 28) {
     const exactVal = getNumberFromProp(props[Math.floor(cbm).toString()]);
     if (Number.isFinite(exactVal)) return exactVal;
   }
 
-  // 2. 정확한 값이 없거나 28을 초과한 경우: 입력된 CBM보다 작거나 같은 것 중 '가장 큰 CBM'을 역순으로 찾음
   let highestFilledCbm = 0;
   let highestFilledCost = 0;
 
@@ -144,12 +141,10 @@ function getDynamicCbmAmount(props, cbm) {
     }
   }
 
-  // 3. 기준이 되는 CBM을 찾았고, PER CBM 값이 존재한다면 비례 계산 적용!
   if (highestFilledCbm > 0 && Number.isFinite(perCost)) {
     return highestFilledCost + ((cbm - highestFilledCbm) * perCost);
   }
 
-  // 4. 1~28 사이에 채워진 값이 아예 없다면 undefined 반환 -> MIN COST 로직으로 넘어감
   return undefined;
 }
 
@@ -165,11 +160,9 @@ function calcConsoleAmount(props, cbm) {
 function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
 
-  // ✨ 1순위 & 2순위 통합: CBM 직접 입력(1~28) 및 빈칸/초과 시 역순 탐색 비례 계산
   const dynamicAmount = getDynamicCbmAmount(props, cbm);
   if (dynamicAmount !== undefined) return dynamicAmount;
 
-  // 3순위: 컨테이너 기본 요금 (20FT, 40HC) 및 CONSOLE (MIN COST 기반)
   const val20 = getNumberFromProp(props['20FT']);
   const val40 = getNumberFromProp(props['40HC']);
   const consoleAmt = calcConsoleAmount(props, cbm);
@@ -179,7 +172,6 @@ function computeAmount(props, type, cbm, selectedRegion) {
   else if (type === '40HC') amount = val40 ?? consoleAmt;
   else amount = consoleAmt;
 
-  // 4순위: 계산식(Formula) 적용
   const rawFormula = getTitle(props, FORMULA_PROP);
   const shouldUseFormula = rawFormula && (!hasBaseCost || /REGION\b|DEFAULT\b|TYPE\b/i.test(rawFormula));
 
@@ -301,8 +293,7 @@ function registerCostsRoutes(app) {
         return {
           id: page.id,
           item: getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '',
-          basicType: getSelectName(props[BASIC_PROP]) || '',
-          displayType: getSelectName(props[DISPLAY_TYPE_PROP]) || '',
+          rowType: getSelectName(props[ROW_TYPE_PROP]) || '', // ✨ 백엔드: CDS, ADD, TAX, OTC 전달
           order: getNumberFromProp(props[ORDER_PROP]) ?? 9999,
           [type]: computeAmount(props, type, cbm, region) ?? null,
           extra: getRichTextHtml(props, EXTRA_PROP) || '',
@@ -313,8 +304,8 @@ function registerCostsRoutes(app) {
     } catch (e) { res.status(500).json({ ok: false, error: 'costs failed' }); }
   });
 
-  // 기타 목록 조회 API들
   app.get('/api/companies/by-region', async (req, res) => {
+    // 생략 없이 기존 코드 유지
     try {
       const { country, region } = req.query;
       const dbIds = getCountryDbIds(country);
@@ -332,6 +323,7 @@ function registerCostsRoutes(app) {
   });
 
   app.get('/api/poe/by-company', async (req, res) => {
+    // 생략 없이 기존 코드 유지
     try {
       const { country, region, company } = req.query;
       const dbIds = getCountryDbIds(country);
@@ -350,6 +342,7 @@ function registerCostsRoutes(app) {
   });
 
   app.get('/api/cargo-types/by-partner', async (req, res) => {
+    // 생략 없이 기존 코드 유지
     try {
       const { country, company, poe } = req.query;
       const dbIds = getCountryDbIds(country);
