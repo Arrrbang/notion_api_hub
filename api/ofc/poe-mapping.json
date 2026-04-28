@@ -1,5 +1,5 @@
 {
-  "LGB/LA": "USLAX",
+  "LGB/LA": ["(BUS)USLAX", "(BUS)UZLGB", "(BUS)USOAK"],
   "NEW YORK": "USNYC",
   "LONG BEACH": "USLGB",
   "CHICAGO": "USCHI",
