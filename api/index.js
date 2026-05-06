@@ -23,7 +23,26 @@ const registerTrcRoutes         = require('./trc/cal');
 const registerPoeCostsRoutes    = require('./ofc/ofc-costs');
 
 const app = express();
-app.use(cors());
+
+/* ─────────────────────────────────────────────────────────
+   CORS 설정 강화
+────────────────────────────────────────────────────────── */
+
+const corsOptions = {
+  // 프론트엔드 주소인 github.io를 허용합니다.
+  origin: "https://arrrbang.github.io", 
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+  optionsSuccessStatus: 204
+};
+
+// 모든 경로에 대해 CORS 미들웨어 적용[cite: 3]
+app.use(cors(corsOptions));
+
+// 브라우저의 Preflight(OPTIONS) 요청에 즉각 응답 설정[cite: 3]
+app.options('*', cors(corsOptions));
+
 app.use(express.json({ limit: '50mb' }));
 
 /* ─────────────────────────────────────────────────────────
