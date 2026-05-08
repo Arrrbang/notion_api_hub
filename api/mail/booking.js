@@ -249,4 +249,58 @@ module.exports = function registerMailBookingRoutes(app) {
       });
     }
   });
+    app.get("/api/mail/booking/pol-options", async (req, res) => {
+    try {
+      const poe = String(req.query.poe || "").trim();
+      const forwarderId = String(req.query.forwarderId || "").trim();
+  
+      if (!poe || !forwarderId) {
+        return res.status(400).json({
+          ok: false,
+          error: "poe와 forwarderId 값이 필요합니다.",
+        });
+      }
+  
+      const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
+        filter: {
+          and: [
+            {
+              property: "POE",
+              multi_select: {
+                contains: poe,
+              },
+            },
+            {
+              property: "포워딩 연락처 및 운임 연결",
+              relation: {
+                contains: forwarderId,
+              },
+            },
+          ],
+        },
+      });
+  
+      const polSet = new Set();
+  
+      ratePages.forEach(page => {
+        const podList = getMultiSelectNames(page.properties?.["POD"]);
+        podList.forEach(v => {
+          if (v) polSet.add(v);
+        });
+      });
+  
+      const options = Array.from(polSet).sort();
+  
+      return res.json({
+        ok: true,
+        options,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        ok: false,
+        error: "POL 옵션 조회 실패",
+        details: e.response?.data || e.message || String(e),
+      });
+    }
+  });
 };
