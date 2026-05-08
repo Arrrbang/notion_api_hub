@@ -7,5 +7,5 @@
   "DALLAS": ["(BUS)USDAL"],
   "NEW YORK": ["(BUS)USNYC"],
   "SEATTLE": "USSEA",
-  "MANZANILLO": "(BUS)MXZLO"
+  "MANZANILLO": ["(BUS)MXZLO"]
 }
