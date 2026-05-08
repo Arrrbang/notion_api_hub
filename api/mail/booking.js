@@ -13,6 +13,15 @@ const PROP_PORT_CODE = "PORT CODE";
 const PROP_PORT_NAME = "PORT NAME";
 const PROP_CONTACT = "연락처";
 
+let portMapCache = null;
+let portMapCacheTime = 0;
+
+let poeOptionsCache = null;
+let poeOptionsCacheTime = 0;
+
+const PORT_MAP_CACHE_TTL = 1000 * 60 * 60; // 1시간
+const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 30; // 30분
+
 function notionHeaders() {
   if (!NOTION_TOKEN) {
     throw new Error("NOTION_API_KEY 또는 NOTION_TOKEN이 설정되어 있지 않습니다.");
@@ -72,32 +81,59 @@ async function retrievePage(pageId) {
   return response.data;
 }
 
+async function getPortMapCached() {
+  const now = Date.now();
+
+  if (portMapCache && now - portMapCacheTime < PORT_MAP_CACHE_TTL) {
+    return portMapCache;
+  }
+
+  const portPages = await queryDatabase(PORT_CODE_DB_ID);
+  const portMap = {};
+
+  portPages.forEach(page => {
+    const props = page.properties || {};
+
+    const code = getTitle(props[PROP_PORT_CODE]);
+    const name = getRichText(props[PROP_PORT_NAME]);
+
+    if (code) {
+      portMap[code] = name || code;
+    }
+  });
+
+  portMapCache = portMap;
+  portMapCacheTime = now;
+
+  return portMap;
+}
+
 module.exports = function registerMailBookingRoutes(app) {
   // 1번 드롭다운: POE 코드 수집 후 PORT NAME으로 표시
   app.get("/api/mail/booking/poe-options", async (req, res) => {
     try {
+      const now = Date.now();
+  
+      if (poeOptionsCache && now - poeOptionsCacheTime < POE_OPTIONS_CACHE_TTL) {
+        return res.json({
+          ok: true,
+          cached: true,
+          options: poeOptionsCache,
+        });
+      }
+  
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID);
-      const portPages = await queryDatabase(PORT_CODE_DB_ID);
-
+      const portMap = await getPortMapCached();
+  
       const poeSet = new Set();
-
+  
       ratePages.forEach(page => {
         const poeList = getMultiSelectNames(page.properties?.[PROP_POE]);
-        poeList.forEach(code => poeSet.add(code));
+        poeList.forEach(code => {
+          if (code) poeSet.add(code);
+        });
       });
-
-      const portMap = {};
-
-      portPages.forEach(page => {
-        const props = page.properties || {};
-        const code = getTitle(props[PROP_PORT_CODE]);
-        const name = getRichText(props[PROP_PORT_NAME]);
-
-        if (code) {
-          portMap[code] = name || code;
-        }
-      });
-
+  
       const options = Array.from(poeSet)
         .sort()
         .map(code => ({
@@ -105,13 +141,17 @@ module.exports = function registerMailBookingRoutes(app) {
           name: portMap[code] || code,
           label: portMap[code] ? `${portMap[code]} (${code})` : code,
         }));
-
-      res.json({
+  
+      poeOptionsCache = options;
+      poeOptionsCacheTime = now;
+  
+      return res.json({
         ok: true,
+        cached: false,
         options,
       });
     } catch (e) {
-      res.status(500).json({
+      return res.status(500).json({
         ok: false,
         error: "POE 드롭다운 조회 실패",
         details: e.response?.data || e.message || String(e),
