@@ -115,47 +115,45 @@ function getNumberFromProp(prop) {
   return undefined;
 }
 
-// ────────────────────────────────
-// [금액 계산 로직] 유동적 CBM 계산기
-// ────────────────────────────────
-// ✨ 수정: 세 번째 파라미터로 rawFormula 추가
 function getDynamicCbmAmount(props, cbm, rawFormula = '') {
   if (!Number.isFinite(cbm)) return undefined;
 
-  // 1. 1 ~ 28 CBM 직접 입력 구간 (공통)
+  // 1. ✨ 'LOOP_35' 키워드가 있을 때의 특수 로직
+  if (rawFormula.includes('LOOP_35')) {
+    const val28 = getNumberFromProp(props['28']);
+    const perCost = getNumberFromProp(props[PER_COST_PROP]);
+
+    // 28 CBM 값과 PER CBM 값이 모두 있어야 계산 가능
+    if (Number.isFinite(val28) && Number.isFinite(perCost)) {
+      // 35 CBM일 때의 꽉 찬 요금 계산 = 28 CBM 요금 + (7 * PER CBM)
+      const maxCost35 = val28 + (7 * perCost); 
+
+      // 36 CBM 이상 구간: 35 CBM 꽉 찬 요금 + 나머지 CBM 요금 (재귀)
+      if (cbm > 35) {
+        const remainder = cbm - 35;
+        // 남은 CBM에 대해 다시 이 함수를 태워서 1 CBM부터의 값을 구함
+        const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula); 
+        
+        if (Number.isFinite(remainderVal)) {
+          return maxCost35 + remainderVal;
+        }
+      }
+
+      // 28 초과 ~ 35 이하 구간: 28 CBM 요금 + 초과한 만큼의 PER CBM 가산
+      if (cbm > 28 && cbm <= 35) {
+        return val28 + ((cbm - 28) * perCost);
+      }
+    }
+  }
+
+  // 2. 1 ~ 28 CBM 직접 입력 구간 (LOOP_35 여부 상관없이 공통 처리)
   if (cbm >= 1 && cbm <= 28) {
     const exactVal = getNumberFromProp(props[Math.floor(cbm).toString()]);
     if (Number.isFinite(exactVal)) return exactVal;
   }
 
-  // 2. ✨ 'LOOP_숫자' 형태의 키워드가 있는지 검사하고, 숫자를 추출
-  const loopMatch = rawFormula.match(/LOOP_(\d+)/i);
-  if (loopMatch) {
-    // 매칭된 숫자(예: 35, 40 등)를 경계값으로 설정
-    const loopBoundary = parseInt(loopMatch[1], 10);
-
-    // 28 초과 ~ loopBoundary 이하 구간: 28 CBM 값 동결
-    if (cbm > 28 && cbm <= loopBoundary) {
-      const val28 = getNumberFromProp(props['28']);
-      if (Number.isFinite(val28)) return val28;
-    }
-    
-    // loopBoundary 초과 구간: 28 CBM 값 + 나머지 CBM 값
-    if (cbm > loopBoundary) {
-      const val28 = getNumberFromProp(props['28']);
-      const remainder = cbm - loopBoundary;
-      
-      // 재귀 호출
-      const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula); 
-      
-      if (Number.isFinite(val28) && Number.isFinite(remainderVal)) {
-        return val28 + remainderVal;
-      }
-    }
-  }
-
-  // 3. ✨ 위 조건에 해당하지 않는 나머지 모든 경우 (기존 PER CBM 로직 유지)
-  const perCost = getNumberFromProp(props[PER_COST_PROP]);
+  // 3. LOOP_35가 아니거나(일반 항목), 28 CBM 이하에서 값이 누락된 경우 (기존 PER CBM 로직 유지)
+  const perCostFallback = getNumberFromProp(props[PER_COST_PROP]);
   let highestFilledCbm = 0;
   let highestFilledCost = 0;
 
@@ -169,8 +167,8 @@ function getDynamicCbmAmount(props, cbm, rawFormula = '') {
     }
   }
 
-  if (highestFilledCbm > 0 && Number.isFinite(perCost)) {
-    return highestFilledCost + ((cbm - highestFilledCbm) * perCost);
+  if (highestFilledCbm > 0 && Number.isFinite(perCostFallback)) {
+    return highestFilledCost + ((cbm - highestFilledCbm) * perCostFallback);
   }
 
   return undefined;
