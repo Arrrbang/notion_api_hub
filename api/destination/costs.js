@@ -118,16 +118,44 @@ function getNumberFromProp(prop) {
 // ────────────────────────────────
 // [금액 계산 로직] 유동적 CBM 계산기
 // ────────────────────────────────
-function getDynamicCbmAmount(props, cbm) {
+// ✨ 수정: 세 번째 파라미터로 rawFormula 추가
+function getDynamicCbmAmount(props, cbm, rawFormula = '') {
   if (!Number.isFinite(cbm)) return undefined;
 
-  const perCost = getNumberFromProp(props[PER_COST_PROP]);
-
+  // 1. 1 ~ 28 CBM 직접 입력 구간 (공통)
   if (cbm >= 1 && cbm <= 28) {
     const exactVal = getNumberFromProp(props[Math.floor(cbm).toString()]);
     if (Number.isFinite(exactVal)) return exactVal;
   }
 
+  // 2. ✨ 'LOOP_숫자' 형태의 키워드가 있는지 검사하고, 숫자를 추출
+  const loopMatch = rawFormula.match(/LOOP_(\d+)/i);
+  if (loopMatch) {
+    // 매칭된 숫자(예: 35, 40 등)를 경계값으로 설정
+    const loopBoundary = parseInt(loopMatch[1], 10);
+
+    // 28 초과 ~ loopBoundary 이하 구간: 28 CBM 값 동결
+    if (cbm > 28 && cbm <= loopBoundary) {
+      const val28 = getNumberFromProp(props['28']);
+      if (Number.isFinite(val28)) return val28;
+    }
+    
+    // loopBoundary 초과 구간: 28 CBM 값 + 나머지 CBM 값
+    if (cbm > loopBoundary) {
+      const val28 = getNumberFromProp(props['28']);
+      const remainder = cbm - loopBoundary;
+      
+      // 재귀 호출
+      const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula); 
+      
+      if (Number.isFinite(val28) && Number.isFinite(remainderVal)) {
+        return val28 + remainderVal;
+      }
+    }
+  }
+
+  // 3. ✨ 위 조건에 해당하지 않는 나머지 모든 경우 (기존 PER CBM 로직 유지)
+  const perCost = getNumberFromProp(props[PER_COST_PROP]);
   let highestFilledCbm = 0;
   let highestFilledCost = 0;
 
@@ -160,7 +188,11 @@ function calcConsoleAmount(props, cbm) {
 function computeAmount(props, type, cbm, selectedRegion) {
   let amount;
 
-  const dynamicAmount = getDynamicCbmAmount(props, cbm);
+  // ✨ 수정: 계산식 값을 먼저 가져옵니다.
+  const rawFormula = getTitle(props, FORMULA_PROP);
+
+  // ✨ 수정: rawFormula를 파라미터로 넘겨줍니다.
+  const dynamicAmount = getDynamicCbmAmount(props, cbm, rawFormula);
   if (dynamicAmount !== undefined) return dynamicAmount;
 
   const val20 = getNumberFromProp(props['20FT']);
@@ -172,7 +204,6 @@ function computeAmount(props, type, cbm, selectedRegion) {
   else if (type === '40HC') amount = val40 ?? consoleAmt;
   else amount = consoleAmt;
 
-  const rawFormula = getTitle(props, FORMULA_PROP);
   const shouldUseFormula = rawFormula && (!hasBaseCost || /REGION\b|DEFAULT\b|TYPE\b/i.test(rawFormula));
 
   if (shouldUseFormula) {
