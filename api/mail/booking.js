@@ -335,8 +335,11 @@ module.exports = function registerMailBookingRoutes(app) {
           id: page.id,
           forwarder: props["포워딩"]?.select?.name || "-",
           carrier: props["선사"]?.select?.name || "-",
-          dr20: props["20DR"]?.number || 0,
-          hc40: props["40HC"]?.number || 0,
+          
+          // 💡 수정된 부분: 일반 숫자가 아닌 '수식' 결과값(number)을 가져옵니다.
+          dr20: props["20DR 합계"]?.formula?.number || 0,
+          hc40: props["40HC 합계"]?.formula?.number || 0,
+          
           validity: validityStr || "-",
         };
       });
