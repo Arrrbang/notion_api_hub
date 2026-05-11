@@ -1,20 +1,9 @@
 {
   "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "api/index.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/index.js",
-      "headers": {
-        "Access-Control-Allow-Origin": "https://arrrbang.github.io",
-        "Access-Control-Allow-Methods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization"
-      }
+      "source": "/(.*)",
+      "destination": "/api/index.js"
     }
   ]
 }
