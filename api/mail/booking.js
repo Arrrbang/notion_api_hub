@@ -19,8 +19,8 @@ let portMapCacheTime = 0;
 let poeOptionsCache = null;
 let poeOptionsCacheTime = 0;
 
-const PORT_MAP_CACHE_TTL = 1000 * 60 * 60; // 1시간
-const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 30; // 30분
+const PORT_MAP_CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 1주일
+const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 1주일
 
 function notionHeaders() {
   if (!NOTION_TOKEN) {
