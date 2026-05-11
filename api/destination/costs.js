@@ -118,41 +118,45 @@ function getNumberFromProp(prop) {
 function getDynamicCbmAmount(props, cbm, rawFormula = '') {
   if (!Number.isFinite(cbm)) return undefined;
 
-  // 1. ✨ 'LOOP_35' 키워드가 있을 때의 특수 로직
-  if (rawFormula.includes('LOOP_35')) {
+  // 1. ✨ 'LOOP_숫자' 형태의 키워드 동적 감지 (예: LOOP_35, LOOP_40, LOOP_50)
+  const loopMatch = rawFormula.match(/LOOP_(\d+)/);
+
+  if (loopMatch) {
+    const threshold = parseInt(loopMatch[1], 10); // 추출한 숫자 (예: 35, 40)
     const val28 = getNumberFromProp(props['28']);
     const perCost = getNumberFromProp(props[PER_COST_PROP]);
 
-    // 28 CBM 값과 PER CBM 값이 모두 있어야 계산 가능
-    if (Number.isFinite(val28) && Number.isFinite(perCost)) {
-      // 35 CBM일 때의 꽉 찬 요금 계산 = 28 CBM 요금 + (7 * PER CBM)
-      const maxCost35 = val28 + (7 * perCost); 
+    // 28 CBM과 PER CBM 값이 있고, 설정한 기준점(threshold)이 28보다 클 때만 작동
+    if (Number.isFinite(val28) && Number.isFinite(perCost) && threshold > 28) {
+      
+      // 기준점(예: 35)에 도달했을 때의 꽉 찬 요금 = 28 CBM 요금 + ((기준점 - 28) * PER CBM)
+      const maxCostAtThreshold = val28 + ((threshold - 28) * perCost); 
 
-      // 36 CBM 이상 구간: 35 CBM 꽉 찬 요금 + 나머지 CBM 요금 (재귀)
-      if (cbm > 35) {
-        const remainder = cbm - 35;
-        // 남은 CBM에 대해 다시 이 함수를 태워서 1 CBM부터의 값을 구함
+      // 기준점 초과 구간 (예: 36 CBM 이상)
+      if (cbm > threshold) {
+        const remainder = cbm - threshold;
+        // 남은 CBM에 대해 다시 순환 (재귀)
         const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula); 
         
         if (Number.isFinite(remainderVal)) {
-          return maxCost35 + remainderVal;
+          return maxCostAtThreshold + remainderVal;
         }
       }
 
-      // 28 초과 ~ 35 이하 구간: 28 CBM 요금 + 초과한 만큼의 PER CBM 가산
-      if (cbm > 28 && cbm <= 35) {
+      // 28 초과 ~ 기준점 이하 구간 (PER CBM 점진적 가산)
+      if (cbm > 28 && cbm <= threshold) {
         return val28 + ((cbm - 28) * perCost);
       }
     }
   }
 
-  // 2. 1 ~ 28 CBM 직접 입력 구간 (LOOP_35 여부 상관없이 공통 처리)
+  // 2. 1 ~ 28 CBM 직접 입력 구간 (LOOP 여부와 상관없이 공통)
   if (cbm >= 1 && cbm <= 28) {
     const exactVal = getNumberFromProp(props[Math.floor(cbm).toString()]);
     if (Number.isFinite(exactVal)) return exactVal;
   }
 
-  // 3. LOOP_35가 아니거나(일반 항목), 28 CBM 이하에서 값이 누락된 경우 (기존 PER CBM 로직 유지)
+  // 3. LOOP 키워드가 없거나 누락된 일반 항목 처리 (기존 PER CBM 로직)
   const perCostFallback = getNumberFromProp(props[PER_COST_PROP]);
   let highestFilledCbm = 0;
   let highestFilledCost = 0;
