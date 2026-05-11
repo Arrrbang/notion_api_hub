@@ -118,61 +118,72 @@ function getNumberFromProp(prop) {
 function getDynamicCbmAmount(props, cbm, rawFormula = '') {
   if (!Number.isFinite(cbm)) return undefined;
 
-  // 1. ✨ 'LOOP_숫자' 형태의 키워드 동적 감지 (예: LOOP_35, LOOP_40, LOOP_50)
-  const loopMatch = rawFormula.match(/LOOP_(\d+)/);
+  const perCost = getNumberFromProp(props[PER_COST_PROP]);
 
-  if (loopMatch) {
-    const threshold = parseInt(loopMatch[1], 10); // 추출한 숫자 (예: 35, 40)
-    const val28 = getNumberFromProp(props['28']);
-    const perCost = getNumberFromProp(props[PER_COST_PROP]);
+  // 전체 열(1~28) 중에서 '가장 높게 채워진 CBM'과 '그 금액' 찾기
+  let maxOverallCbm = 0;
+  let maxOverallCost = 0;
+  for (let i = 28; i >= 1; i--) {
+    const val = getNumberFromProp(props[i.toString()]);
+    if (Number.isFinite(val)) {
+      maxOverallCbm = i;
+      maxOverallCost = val;
+      break;
+    }
+  }
 
-    // 28 CBM과 PER CBM 값이 있고, 설정한 기준점(threshold)이 28보다 클 때만 작동
-    if (Number.isFinite(val28) && Number.isFinite(perCost) && threshold > 28) {
+  // 1. ✨ LOOP_숫자 감지 (대소문자 무시, 28 열이 비어있어도 작동)
+  const loopMatch = rawFormula.match(/LOOP_(\d+)/i);
+
+  if (loopMatch && maxOverallCbm > 0 && Number.isFinite(perCost)) {
+    const threshold = parseInt(loopMatch[1], 10); // 예: 35
+
+    // 설정한 기준점이 실제로 최대 입력된 CBM보다 클 때만 유효하게 작동
+    if (threshold >= maxOverallCbm) {
       
-      // 기준점(예: 35)에 도달했을 때의 꽉 찬 요금 = 28 CBM 요금 + ((기준점 - 28) * PER CBM)
-      const maxCostAtThreshold = val28 + ((threshold - 28) * perCost); 
+      // 임계점(예: 35 CBM)에 도달했을 때 꽉 찬 최대 요금 계산
+      // = 가장 큰 입력값 + (임계점까지 남은 CBM * PER CBM)
+      const maxCostAtThreshold = maxOverallCost + ((threshold - maxOverallCbm) * perCost);
 
-      // 기준점 초과 구간 (예: 36 CBM 이상)
+      // 임계점 초과 구간 (예: 36 CBM 이상) -> 초과분 순환 계산
       if (cbm > threshold) {
         const remainder = cbm - threshold;
-        // 남은 CBM에 대해 다시 순환 (재귀)
-        const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula); 
+        const remainderVal = getDynamicCbmAmount(props, remainder, rawFormula);
         
         if (Number.isFinite(remainderVal)) {
           return maxCostAtThreshold + remainderVal;
         }
       }
 
-      // 28 초과 ~ 기준점 이하 구간 (PER CBM 점진적 가산)
-      if (cbm > 28 && cbm <= threshold) {
-        return val28 + ((cbm - 28) * perCost);
+      // 기준점 이하이면서 노션에 입력된 최고 CBM보다 큰 구간 (예: 15까지 입력되어 있고 CBM이 30일 때)
+      if (cbm > maxOverallCbm && cbm <= threshold) {
+        return maxOverallCost + ((cbm - maxOverallCbm) * perCost);
       }
     }
   }
 
-  // 2. 1 ~ 28 CBM 직접 입력 구간 (LOOP 여부와 상관없이 공통)
+  // 2. 1 ~ 28 CBM 직접 입력 매칭 (LOOP 여부 무관하게 우선 적용)
   if (cbm >= 1 && cbm <= 28) {
     const exactVal = getNumberFromProp(props[Math.floor(cbm).toString()]);
     if (Number.isFinite(exactVal)) return exactVal;
   }
 
-  // 3. LOOP 키워드가 없거나 누락된 일반 항목 처리 (기존 PER CBM 로직)
-  const perCostFallback = getNumberFromProp(props[PER_COST_PROP]);
-  let highestFilledCbm = 0;
-  let highestFilledCost = 0;
-
+  // 3. 위 조건에 해당하지 않는 나머지 CBM 처리 (기존 PER CBM 가산 로직)
+  let highestFilledCbmForTarget = 0;
+  let highestFilledCostForTarget = 0;
   const maxCheck = Math.min(Math.floor(cbm), 28);
+  
   for (let i = maxCheck; i >= 1; i--) {
     const val = getNumberFromProp(props[i.toString()]);
     if (Number.isFinite(val)) {
-      highestFilledCbm = i;
-      highestFilledCost = val;
+      highestFilledCbmForTarget = i;
+      highestFilledCostForTarget = val;
       break;
     }
   }
 
-  if (highestFilledCbm > 0 && Number.isFinite(perCostFallback)) {
-    return highestFilledCost + ((cbm - highestFilledCbm) * perCostFallback);
+  if (highestFilledCbmForTarget > 0 && Number.isFinite(perCost)) {
+    return highestFilledCostForTarget + ((cbm - highestFilledCbmForTarget) * perCost);
   }
 
   return undefined;
