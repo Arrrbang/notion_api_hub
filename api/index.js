@@ -35,12 +35,16 @@ const allowedOrigins = [
   "http://localhost:5500"
 ];
 
+/* ─────────────────────────────────────────────────────────
+   CORS 설정 강화 (유연한 도메인 허용 방식)
+────────────────────────────────────────────────────────── */
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    // origin이 없거나(서버간 통신), 허용할 도메인 주소가 조금이라도 포함되어 있으면 통과!
+    if (!origin || origin.includes("github.io") || origin.includes("localhost") || origin.includes("127.0.0.1")) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      callback(null, false); // 에러를 뿜어내지 않고 부드럽게 차단
     }
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -49,7 +53,7 @@ const corsOptions = {
   optionsSuccessStatus: 204
 };
 
-// 모든 경로에 대해 CORS 미들웨어 적용[cite: 3]
+// 모든 경로에 대해 CORS 미들웨어 적용
 app.use(cors(corsOptions));
 
 // 브라우저의 Preflight(OPTIONS) 요청에 즉각 응답 설정[cite: 3]
