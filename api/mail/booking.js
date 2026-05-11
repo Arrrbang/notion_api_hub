@@ -303,4 +303,54 @@ module.exports = function registerMailBookingRoutes(app) {
       });
     }
   });
+  // 3번: 선택한 POE에 해당하는 운임표 데이터 가져오기
+  app.get("/api/mail/booking/rates", async (req, res) => {
+    try {
+      const poe = String(req.query.poe || "").trim();
+
+      if (!poe) {
+        return res.status(400).json({ ok: false, error: "poe 값이 필요합니다." });
+      }
+
+      // POE 속성에서 일치하는 값을 가진 행 필터링
+      const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
+        filter: {
+          property: "POE",
+          multi_select: {
+            contains: poe,
+          },
+        },
+      });
+
+      // 필요한 속성만 추출
+      const rates = ratePages.map(page => {
+        const props = page.properties || {};
+        
+        // 날짜 속성은 시작일과 종료일 처리
+        const validityStart = props["VALIDITY"]?.date?.start || "";
+        const validityEnd = props["VALIDITY"]?.date?.end || "";
+        const validityStr = validityEnd ? `${validityStart} ~ ${validityEnd}` : validityStart;
+
+        return {
+          id: page.id,
+          forwarder: props["포워딩"]?.select?.name || "-",
+          carrier: props["선사"]?.select?.name || "-",
+          dr20: props["20DR"]?.number || 0,
+          hc40: props["40HC"]?.number || 0,
+          validity: validityStr || "-",
+        };
+      });
+
+      return res.json({
+        ok: true,
+        rates,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        ok: false,
+        error: "운임 표 조회 실패",
+        details: e.response?.data || e.message || String(e),
+      });
+    }
+  });
 };
