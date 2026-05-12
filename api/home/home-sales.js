@@ -73,10 +73,11 @@ router.get("/", async (req, res) => {
     }
 
     const today = new Date();
-    const nextWeek = new Date();
-    nextWeek.setDate(today.getDate() + 7);
+    const nextPassportLimitDate = new Date();
+    nextPassportLimitDate.setDate(today.getDate() + 14);
+    
     const todayStr = today.toISOString().split('T')[0];
-    const nextWeekStr = nextWeek.toISOString().split('T')[0];
+    const nextPassportLimitDateStr = nextPassportLimitDate.toISOString().split('T')[0];
 
     // Common Headers
     const headers = notionHeaders();
@@ -92,7 +93,7 @@ router.get("/", async (req, res) => {
             { property: "영업담당", select: { equals: salesRepName } },
             { property: "여권수취여부", select: { does_not_equal: "수취" } },
             { property: "서류마감", date: { on_or_after: todayStr } },
-            { property: "서류마감", date: { on_or_before: nextWeekStr } }
+            { property: "서류마감", date: { on_or_before: nextPassportLimitDateStr } }
           ]
         },
         sorts: [ // ✅ 필터와 정렬을 같은 객체에 통합
@@ -149,8 +150,10 @@ router.get("/", async (req, res) => {
       `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`,
       {
         filter: {
-          property: "컨테이너/콘솔",
-          select: { equals: "콘솔대기" }
+          and: [
+            { property: "영업담당", select: { equals: salesRepName } },
+            { property: "컨테이너/콘솔", select: { equals: "콘솔대기" } }
+          ]
         },
         sorts: [
           { property: "POE", direction: "ascending" },
