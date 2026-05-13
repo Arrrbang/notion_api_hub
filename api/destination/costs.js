@@ -19,6 +19,7 @@ const ITEM_PROP         = process.env.ITEM_PROP         || '항목';
 const EXTRA_PROP        = process.env.EXTRA_PROP        || '참고사항';   
 const FORMULA_PROP      = process.env.FORMULA_PROP      || '계산식';     
 const CURRENCY_PROP     = '통화';
+const CONTAINER_TYPE_PROP = process.env.CONTAINER_TYPE_PROP || '컨테이너타입';
 
 // 1~28 CBM 직접 입력 속성명 배열 생성
 const CBM_DIRECT_PROPS = Array.from({ length: 28 }, (_, i) => (i + 1).toString());
@@ -402,6 +403,46 @@ function registerCostsRoutes(app) {
       pages.forEach(p => getMultiSelectNames(p.properties[CARGO_PROP]).forEach(t => set.add(t)));
       res.json({ types: Array.from(set).sort() });
     } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/container-types/by-selection', async (req, res) => {
+    try {
+      const { country, region, company, poe, cargo } = req.query;
+  
+      const dbIds = getCountryDbIds(country);
+      if (!dbIds.length) return res.json({ types: [] });
+  
+      const filters = [];
+  
+      if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
+      if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
+      if (poe) filters.push({ property: POE_PROP, multi_select: { contains: poe } });
+      if (cargo) filters.push({ property: CARGO_PROP, multi_select: { contains: cargo } });
+  
+      const pages = [];
+  
+      for (const id of dbIds) {
+        const resp = await axios.post(
+          `https://api.notion.com/v1/databases/${id}/query`,
+          { filter: filters.length ? { and: filters } : undefined },
+          { headers: notionHeaders() }
+        );
+        pages.push(...resp.data.results);
+      }
+  
+      const order = ['20FT', '40HC', 'CONSOLE'];
+      const set = new Set();
+  
+      pages.forEach(p => {
+        getMultiSelectNames(p.properties[CONTAINER_TYPE_PROP]).forEach(t => set.add(t));
+      });
+  
+      const types = order.filter(t => set.has(t));
+  
+      res.json({ types });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 }
 
