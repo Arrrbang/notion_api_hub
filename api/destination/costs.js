@@ -433,11 +433,20 @@ function registerCostsRoutes(app) {
       const order = ['20FT', '40HC', 'CONSOLE'];
       const set = new Set();
   
-      pages.forEach(p => {
-        getMultiSelectNames(p.properties[CONTAINER_TYPE_PROP]).forEach(t => set.add(t));
-      });
-  
-      const types = order.filter(t => set.has(t));
+    let hasAnyContainerType = false;
+    
+    pages.forEach(p => {
+      const names = getMultiSelectNames(p.properties[CONTAINER_TYPE_PROP]);
+    
+      if (names.length > 0) {
+        hasAnyContainerType = true;
+        names.forEach(t => set.add(t));
+      }
+    });
+    
+    const types = hasAnyContainerType
+      ? order.filter(t => set.has(t))
+      : order;
   
       res.json({ types });
     } catch (e) {
