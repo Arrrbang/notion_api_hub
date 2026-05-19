@@ -255,7 +255,33 @@ function evalRangeFormula(code, cbm) {
   }
   const lines = clean.split(/[\n,]+/).map(s => s.trim().replace(/^\(+|\)+$/g, '')).filter(Boolean);
   for (const line of lines) {
-    let m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
+  
+    // 20<CBM≤30 = 3000 같은 형식 처리
+    let m = line.match(/^(\d+(?:\.\d+)?)\s*(<=|<|≤)\s*CBM\s*(<=|<|≤)\s*(\d+(?:\.\d+)?)\s*=\s*(.+)$/i);
+    if (m) {
+      const left = Number(m[1]);
+      const leftOp = m[2];
+      const rightOp = m[3];
+      const right = Number(m[4]);
+  
+      const okLeft = leftOp === '<' ? cbm > left : cbm >= left;
+      const okRight = rightOp === '<' ? cbm < right : cbm <= right;
+  
+      if (okLeft && okRight) return evalFormula(m[5], { cbm });
+    }
+  
+    // 25<CBM = 3000 같은 형식 처리
+    m = line.match(/^(\d+(?:\.\d+)?)\s*(<=|<|≤)\s*CBM\s*=\s*(.+)$/i);
+    if (m) {
+      const left = Number(m[1]);
+      const op = m[2];
+  
+      if ((op === '<' && cbm > left) || ((op === '<=' || op === '≤') && cbm >= left)) {
+        return evalFormula(m[3], { cbm });
+      }
+    }
+  
+    m = line.match(/^(\d+)\s*(?:<=|≤|<)\s*CBM\s*(?:<=|≤|<)\s*(\d+)\s*=\s*(.+)$/i);
     if (m && cbm >= Number(m[1]) && cbm <= Number(m[2])) return evalFormula(m[3], { cbm });
     m = line.match(/^CBM\s*(<=|>=|≤|≥|[<>]=?)\s*(\d+)\s*=\s*(.+)$/i);
     if (m) {
