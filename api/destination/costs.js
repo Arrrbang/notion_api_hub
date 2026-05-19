@@ -303,12 +303,68 @@ function applyRegionFormula(code, region, base, cbm) {
 }
 
 function applyTypeFormula(code, type) {
-  let expr = String(code);
-  const ifRegex = /IF\(\s*TYPE\s*=\s*["']([^"']*)["']\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)/i;
-  while (ifRegex.test(expr)) {
-    expr = expr.replace(ifRegex, (m, target, thenP, elseP) => (type.toUpperCase() === target.toUpperCase() ? thenP : elseP));
+  let expr = String(code || '').trim();
+
+  function parseIfType(s) {
+    const start = s.toUpperCase().indexOf('IF(');
+    if (start < 0) return s;
+
+    let i = start + 3;
+    let depth = 0;
+    let parts = [''];
+    let quote = null;
+
+    for (; i < s.length; i++) {
+      const ch = s[i];
+
+      if (quote) {
+        parts[parts.length - 1] += ch;
+        if (ch === quote) quote = null;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        parts[parts.length - 1] += ch;
+        continue;
+      }
+
+      if (ch === '(') {
+        depth++;
+        parts[parts.length - 1] += ch;
+        continue;
+      }
+
+      if (ch === ')') {
+        if (depth === 0) break;
+        depth--;
+        parts[parts.length - 1] += ch;
+        continue;
+      }
+
+      if (ch === ',' && depth === 0) {
+        parts.push('');
+        continue;
+      }
+
+      parts[parts.length - 1] += ch;
+    }
+
+    if (parts.length < 3) return s;
+
+    const condition = parts[0].trim();
+    const thenP = parts[1].trim();
+    const elseP = parts.slice(2).join(',').trim();
+
+    const m = condition.match(/^TYPE\s*=\s*["']([^"']+)["']$/i);
+    if (!m) return s;
+
+    return type.toUpperCase() === m[1].toUpperCase()
+      ? thenP
+      : parseIfType(elseP);
   }
-  return expr;
+
+  return parseIfType(expr);
 }
 
 // ────────────────────────────────
