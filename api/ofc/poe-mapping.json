@@ -8,5 +8,5 @@
   "NEW YORK": ["(BUS)USNYC"],
   "SEATTLE": "USSEA",
   "MANZANILLO": ["(BUS)MXZLO"],
-  "PRAHA (t/s hamburg)": ["(BUS)CZPRG"]
+  "PRAHA (t/s hamburg + rail)": ["(BUS)CZPRG"]
 }
