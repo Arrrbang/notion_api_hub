@@ -3,7 +3,7 @@ const axios = require("axios");
 
 const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05"; // 기존 OFC 데이터베이스
 const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";  // 추가 비용 데이터베이스
-const MAPPING_DB_ID = "36e0b10191ce804492fce82a1d2719c3"; // [NEW] POE 매핑 데이터베이스
+const MAPPING_DB_ID = "36e0b10191ce804492fce82a1d2719c3"; // POE 매핑 데이터베이스
 
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
@@ -47,15 +47,11 @@ module.exports = function registerPoeCostsRoutes(app) {
         return res.status(400).json({ ok: false, error: "POE를 입력하세요. (예: LA)" });
       }
 
-      let targetPoes = [frontPoe]; 
-
-      // 1. 매핑 DB에서 PORT CODE(텍스트) 가져오기
+      // 1. 매핑 DB에서 PORT CODE 찾기
       const mappingFilter = {
         filter: {
-          property: "PORT NAME", // 제목 속성
-          title: {
-            equals: frontPoe
-          }
+          property: "PORT NAME",
+          title: { equals: frontPoe }
         }
       };
 
@@ -65,16 +61,25 @@ module.exports = function registerPoeCostsRoutes(app) {
         { headers: notionHeaders() }
       );
 
+      let targetPoes = []; // 빈 배열 시작 (이름으로 대체 검색 금지)
+
       if (mappingResp.data.results && mappingResp.data.results.length > 0) {
-        const mappingPage = mappingResp.data.results[0];
-        const rawCodes = richTextToPlain(mappingPage.properties["PORT CODE"]?.rich_text || []);
-        
+        const rawCodes = richTextToPlain(mappingResp.data.results[0].properties["PORT CODE"]?.rich_text || []);
         if (rawCodes) {
-          targetPoes = rawCodes.split(",").map(code => code.trim()).filter(code => code !== "");
+          // 대문자 변환 및 공백 완벽 제거
+          targetPoes = rawCodes.split(",").map(code => code.trim().toUpperCase()).filter(code => code.length > 0);
         }
       }
 
-      // 2. 검색에 사용할 공통 필터 (POE 컬럼 확인)
+      // 매핑을 못 찾으면 얄짤없이 여기서 차단
+      if (targetPoes.length === 0) {
+        return res.status(404).json({
+          ok: false,
+          error: `매핑 DB에서 '${frontPoe}'에 해당하는 PORT CODE를 찾을 수 없습니다.`
+        });
+      }
+
+      // 2. 노션 API에 보낼 1차 필터
       const filterBody = {
         filter: {
           or: targetPoes.map(code => ({
@@ -86,23 +91,35 @@ module.exports = function registerPoeCostsRoutes(app) {
         }
       };
 
-      // 🚨 [핵심 수정 부분] 3. 메인 해상운임(OFC) DB를 먼저 조회
+      // 3. 메인 해상운임(OFC) DB 조회
       const ofcResp = await axios.post(`https://api.notion.com/v1/databases/${TARGET_DB_ID}/query`, filterBody, { headers: notionHeaders() });
-      const ofcResults = ofcResp.data.results || [];
+      let ofcResults = ofcResp.data.results || [];
 
-      // 🚨 메인 운임 데이터가 없으면, 추가비용을 아예 조회하지 않고 즉시 404 리턴
+      // 🚨 [JS 단 1차 철벽 필터] 노션이 잘못 뱉은 놈들 여기서 다 죽임
+      ofcResults = ofcResults.filter(page => {
+        const tags = getMultiSelectNames(page.properties["POE"]).map(t => t.trim().toUpperCase());
+        // 노션 다중선택 태그 중에 우리가 찾는 코드(targetPoes)가 '정확히' 일치하는 놈만 통과!
+        return targetPoes.some(code => tags.includes(code));
+      });
+
       if (ofcResults.length === 0) {
         return res.status(404).json({
           ok: false,
-          error: `매핑된 POE(${targetPoes.join(", ")})에 해당하는 해상 운임 데이터를 찾을 수 없습니다.`
+          error: `코드(${targetPoes.join(", ")})와 완벽히 일치하는 해상 운임 데이터가 없습니다.`
         });
       }
 
-      // 🚨 4. 메인 운임이 존재할 때만, 동일한 POE 조건으로 추가비용 DB 조회
-      const extraResp = await axios.post(`https://api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() });
-      const extraResults = extraResp.data.results || [];
+      // 4. 추가비용 DB 조회 (메인 운임이 통과했을 때만)
+      const extraResp = await axios.post(`https://api.api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() });
+      let extraResults = extraResp.data.results || [];
 
-      // 5. 기존 OFC 데이터 정제
+      // 🚨 [JS 단 2차 철벽 필터] 추가비용에 딸려온 불순물 완벽 제거
+      extraResults = extraResults.filter(page => {
+        const tags = getMultiSelectNames(page.properties["POE"]).map(t => t.trim().toUpperCase());
+        return targetPoes.some(code => tags.includes(code));
+      });
+
+      // 5. 정제
       const parsedOfcData = ofcResults.map(page => {
         const props = page.properties;
         const raw20DR = getFormulaNumber(props["20DR"]);
@@ -118,10 +135,8 @@ module.exports = function registerPoeCostsRoutes(app) {
         };
       });
 
-      // 6. 추가 비용(Extra Costs) 데이터 정제
       const parsedExtraCosts = extraResults.map(page => {
         const props = page.properties;
-        
         const raw20 = props["20DR"]?.number || 0;
         const raw40 = props["40HC"]?.number || 0;
         const rawCONSOLE = props["CONSOLE"]?.number || 0;
@@ -129,17 +144,17 @@ module.exports = function registerPoeCostsRoutes(app) {
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
-          poeList: getMultiSelectNames(props["POE"]),
+          // 💡 디버깅용: 프론트로 내려보낼 때 이놈이 무슨 태그를 달고 통과했는지 확인
+          poeList: getMultiSelectNames(props["POE"]), 
           cost20: Math.round(raw20),
           cost40: Math.round(raw40),
           costCONSOLE: Math.round(rawCONSOLE)
         };
       });
 
-      // 7. 프론트엔드로 최종 전달
       return res.json({
         ok: true,
-        input: { frontPoe, targetPoe: targetPoes },
+        input: { frontPoe, searchedCodes: targetPoes }, 
         ofcData: parsedOfcData,       
         extraCosts: parsedExtraCosts  
       });
