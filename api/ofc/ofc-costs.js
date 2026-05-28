@@ -88,12 +88,10 @@ module.exports = function registerPoeCostsRoutes(app) {
       }
 
       // 4. 추가비용 DB 조회
-      // (오타 수정: api.api.notion.com -> api.notion.com)
       const extraResp = await axios.post(`https://api.notion.com/v1/databases/${EXTRA_DB_ID}/query`, filterBody, { headers: notionHeaders() });
       let extraResults = extraResp.data.results || [];
 
-      // 🚨 [자바스크립트 철벽 방어막 2] 대표님께서 말씀하신 바로 그 기능!
-      // 일치하는 코드가 없으면 아무것도 안 가져오게 (배열을 비워버리게) 만듭니다.
+      // 🚨 [자바스크립트 철벽 방어막 2] 일치하는 코드가 없으면 아무것도 안 가져오게 (배열을 비워버리게) 만듭니다.
       extraResults = extraResults.filter(page => {
         const tags = getMultiSelectNames(page.properties["POE"]).map(t => t.trim().toUpperCase());
         return targetPoes.some(code => tags.includes(code));
@@ -119,7 +117,6 @@ module.exports = function registerPoeCostsRoutes(app) {
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
-          poeList: getMultiSelectNames(props["POE"]), // 프론트에서 디버깅 가능하도록 태그 목록 남김
           cost20: Math.round(props["20DR"]?.number || 0),
           cost40: Math.round(props["40HC"]?.number || 0),
           costCONSOLE: Math.round(props["CONSOLE"]?.number || 0)
@@ -128,7 +125,8 @@ module.exports = function registerPoeCostsRoutes(app) {
 
       return res.json({
         ok: true,
-        input: { frontPoe, searchedCodes: targetPoes }, 
+        // 🚨 프론트엔드가 인식할 수 있도록 변수명을 원래대로(targetPoe) 복구했습니다.
+        input: { frontPoe, targetPoe: targetPoes }, 
         ofcData: parsedOfcData,       
         extraCosts: parsedExtraCosts  
       });
