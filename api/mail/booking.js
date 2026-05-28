@@ -3,9 +3,10 @@ const axios = require("axios");
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
 // 하드코딩 DB ID
-const OCEAN_RATE_DB_ID = "33e0b10191ce806fb83cf8013b9a74b3";
-const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79";
-// 🚨 수정됨: 새로운 포트 코드 DB ID 적용
+const OCEAN_RATE_DB_ID = "33e0b10191ce806fb83cf8013b9a74b3"; // 해상운임 DB
+const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79"; // 포워딩 연락처 DB
+
+// 🚨 36e... 매핑 DB 적용 (PORT NAME이 제목, PORT CODE가 텍스트)
 const PORT_CODE_DB_ID = "36e0b10191ce804492fce82a1d2719c3";
 
 const PROP_POE = "POE";
@@ -16,18 +17,17 @@ const PROP_CONTACT = "연락처";
 
 let portMapCache = null;
 let portMapCacheTime = 0;
-
 let poeOptionsCache = null;
 let poeOptionsCacheTime = 0;
 
+// 🚨 테스트용 무캐시 설정 (나중에 배포 시 1000 * 60 * 60 * 24 * 7 로 변경하세요)
 const PORT_MAP_CACHE_TTL = 0; 
-const POE_OPTIONS_CACHE_TTL = 0;
+const POE_OPTIONS_CACHE_TTL = 0; 
 
 function notionHeaders() {
   if (!NOTION_TOKEN) {
     throw new Error("NOTION_API_KEY 또는 NOTION_TOKEN이 설정되어 있지 않습니다.");
   }
-
   return {
     Authorization: `Bearer ${NOTION_TOKEN}`,
     "Content-Type": "application/json",
@@ -54,7 +54,6 @@ function getRelationIds(prop) {
 async function queryDatabase(databaseId, body = {}) {
   const results = [];
   let cursor;
-
   do {
     const response = await axios.post(
       `https://api.notion.com/v1/databases/${databaseId}/query`,
@@ -65,11 +64,9 @@ async function queryDatabase(databaseId, body = {}) {
       },
       { headers: notionHeaders() }
     );
-
     results.push(...(response.data.results || []));
     cursor = response.data.has_more ? response.data.next_cursor : null;
   } while (cursor);
-
   return results;
 }
 
@@ -78,13 +75,12 @@ async function retrievePage(pageId) {
     `https://api.notion.com/v1/pages/${pageId}`,
     { headers: notionHeaders() }
   );
-
   return response.data;
 }
 
+// ⭐️ 36e 매핑 DB 파싱 로직
 async function getPortMapCached() {
   const now = Date.now();
-
   if (portMapCache && now - portMapCacheTime < PORT_MAP_CACHE_TTL) {
     return portMapCache;
   }
@@ -95,45 +91,41 @@ async function getPortMapCached() {
   portPages.forEach(page => {
     const props = page.properties || {};
 
-    // 🚨 수정됨: PORT NAME이 제목(Title), PORT CODE가 텍스트(Rich Text)
+    // 🚨 36e 구조: PORT NAME이 제목(Title), PORT CODE가 텍스트(Rich Text)
     const name = getTitle(props[PROP_PORT_NAME]);
     const rawCodes = getRichText(props[PROP_PORT_CODE]);
 
     if (rawCodes) {
-      // 🚨 수정됨: 텍스트에 여러 개의 코드가 콤마로 들어있을 수 있으므로 분리해서 매핑
+      // 텍스트에 여러 개의 코드가 콤마로 들어있을 수 있으므로 분리해서 매핑
       const codes = rawCodes.split(",").map(c => c.trim()).filter(c => c !== "");
-      
       codes.forEach(code => {
-        portMap[code] = name || code;
+        portMap[code] = name || code; // { "USLAX": "LGB/LA" } 형태로 저장
       });
     }
   });
 
   portMapCache = portMap;
   portMapCacheTime = now;
-
   return portMap;
 }
 
 module.exports = function registerMailBookingRoutes(app) {
-  // 1번 드롭다운: POE 코드 수집 후 PORT NAME으로 표시
+  
+  // 1번 드롭다운: POE 옵션 조회 (⭐️ 속도 개선 병렬 처리 적용)
   app.get("/api/mail/booking/poe-options", async (req, res) => {
     try {
       const now = Date.now();
-  
       if (poeOptionsCache && now - poeOptionsCacheTime < POE_OPTIONS_CACHE_TTL) {
-        return res.json({
-          ok: true,
-          cached: true,
-          options: poeOptionsCache,
-        });
+        return res.json({ ok: true, cached: true, options: poeOptionsCache });
       }
   
-      const ratePages = await queryDatabase(OCEAN_RATE_DB_ID);
-      const portMap = await getPortMapCached();
+      // 🚨 병렬 처리 (Promise.all) - 해상운임 DB와 매핑 DB를 동시에 불러옴
+      const [ratePages, portMap] = await Promise.all([
+        queryDatabase(OCEAN_RATE_DB_ID),
+        getPortMapCached()
+      ]);
   
       const poeSet = new Set();
-  
       ratePages.forEach(page => {
         const poeList = getMultiSelectNames(page.properties?.[PROP_POE]);
         poeList.forEach(code => {
@@ -141,22 +133,20 @@ module.exports = function registerMailBookingRoutes(app) {
         });
       });
   
+      // 매핑 데이터를 기반으로 라벨 생성
       const options = Array.from(poeSet)
         .sort()
         .map(code => ({
           code,
           name: portMap[code] || code,
-          label: portMap[code] ? `${portMap[code]} (${code})` : code,
+          // portMap에 값이 있으면 "이름 (코드)", 없으면 그냥 "코드" 노출
+          label: portMap[code] ? `${portMap[code]} (${code})` : code, 
         }));
   
       poeOptionsCache = options;
       poeOptionsCacheTime = now;
   
-      return res.json({
-        ok: true,
-        cached: false,
-        options,
-      });
+      return res.json({ ok: true, cached: false, options });
     } catch (e) {
       return res.status(500).json({
         ok: false,
@@ -170,38 +160,25 @@ module.exports = function registerMailBookingRoutes(app) {
   app.get("/api/mail/booking/forwarders", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
-
       if (!poe) {
-        return res.status(400).json({
-          ok: false,
-          error: "poe 값이 필요합니다.",
-        });
+        return res.status(400).json({ ok: false, error: "poe 값이 필요합니다." });
       }
 
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
-        filter: {
-          property: PROP_POE,
-          multi_select: {
-            contains: poe,
-          },
-        },
+        filter: { property: PROP_POE, multi_select: { contains: poe } },
       });
 
       const forwarderIdSet = new Set();
-
       ratePages.forEach(page => {
         const ids = getRelationIds(page.properties?.[PROP_RELATION]);
         ids.forEach(id => forwarderIdSet.add(id));
       });
 
       const forwarders = [];
-
       for (const id of forwarderIdSet) {
         const page = await retrievePage(id);
         const props = page.properties || {};
-
         const titleProp = Object.values(props).find(prop => prop.type === "title");
-
         forwarders.push({
           id,
           name: getTitle(titleProp) || "이름 없음",
@@ -209,35 +186,22 @@ module.exports = function registerMailBookingRoutes(app) {
       }
 
       forwarders.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-
-      res.json({
-        ok: true,
-        forwarders,
-      });
+      res.json({ ok: true, forwarders });
     } catch (e) {
-      res.status(500).json({
-        ok: false,
-        error: "포워딩 드롭다운 조회 실패",
-        details: e.response?.data || e.message || String(e),
-      });
+      res.status(500).json({ ok: false, error: "포워딩 드롭다운 조회 실패", details: e.response?.data || e.message || String(e) });
     }
   });
 
-  // 2번 드롭다운 선택 후 연락처 반환
+  // 포워딩 연락처 반환
   app.get("/api/mail/booking/forwarder-contact", async (req, res) => {
     try {
       const id = String(req.query.id || "").trim();
-
       if (!id) {
-        return res.status(400).json({
-          ok: false,
-          error: "id 값이 필요합니다.",
-        });
+        return res.status(400).json({ ok: false, error: "id 값이 필요합니다." });
       }
 
       const page = await retrievePage(id);
       const props = page.properties || {};
-
       const titleProp = Object.values(props).find(prop => prop.type === "title");
 
       res.json({
@@ -249,37 +213,23 @@ module.exports = function registerMailBookingRoutes(app) {
         },
       });
     } catch (e) {
-      res.status(500).json({
-        ok: false,
-        error: "포워딩 연락처 조회 실패",
-        details: e.response?.data || e.message || String(e),
-      });
+      res.status(500).json({ ok: false, error: "포워딩 연락처 조회 실패", details: e.response?.data || e.message || String(e) });
     }
   });
   
+  // POL 옵션
   app.get("/api/mail/booking/pol-options", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
-  
       if (!poe) {
-        return res.status(400).json({
-          ok: false,
-          error: "poe 값이 필요합니다.",
-        });
+        return res.status(400).json({ ok: false, error: "poe 값이 필요합니다." });
       }
   
-      // 노션 필터에서 포워딩 relation 조건 삭제, POE만 체크
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
-        filter: {
-          property: "POE",
-          multi_select: {
-            contains: poe,
-          },
-        },
+        filter: { property: "POE", multi_select: { contains: poe } },
       });
   
       const polSet = new Set();
-  
       ratePages.forEach(page => {
         const podList = getMultiSelectNames(page.properties?.["POD"]); // POL(노션에서는 POD 속성)
         podList.forEach(v => {
@@ -288,43 +238,26 @@ module.exports = function registerMailBookingRoutes(app) {
       });
   
       const options = Array.from(polSet).sort();
-  
-      return res.json({
-        ok: true,
-        options,
-      });
+      return res.json({ ok: true, options });
     } catch (e) {
-      return res.status(500).json({
-        ok: false,
-        error: "POL 옵션 조회 실패",
-        details: e.response?.data || e.message || String(e),
-      });
+      return res.status(500).json({ ok: false, error: "POL 옵션 조회 실패", details: e.response?.data || e.message || String(e) });
     }
   });
-  // 3번: 선택한 POE에 해당하는 운임표 데이터 가져오기
+  
+  // 운임표 데이터
   app.get("/api/mail/booking/rates", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
-
       if (!poe) {
         return res.status(400).json({ ok: false, error: "poe 값이 필요합니다." });
       }
 
-      // POE 속성에서 일치하는 값을 가진 행 필터링
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
-        filter: {
-          property: "POE",
-          multi_select: {
-            contains: poe,
-          },
-        },
+        filter: { property: "POE", multi_select: { contains: poe } },
       });
 
-      // 필요한 속성만 추출
       const rates = ratePages.map(page => {
         const props = page.properties || {};
-        
-        // 날짜 속성은 시작일과 종료일 처리
         const validityStart = props["VALIDITY"]?.date?.start || "";
         const validityEnd = props["VALIDITY"]?.date?.end || "";
         const validityStr = validityEnd ? `${validityStart} ~ ${validityEnd}` : validityStart;
@@ -333,24 +266,15 @@ module.exports = function registerMailBookingRoutes(app) {
           id: page.id,
           forwarder: props["포워딩"]?.select?.name || "-",
           carrier: props["선사"]?.select?.name || "-",
-          
           dr20: props["20DR 합계"]?.formula?.number || 0,
           hc40: props["40HC 합계"]?.formula?.number || 0,
-          
           validity: validityStr || "-",
         };
       });
 
-      return res.json({
-        ok: true,
-        rates,
-      });
+      return res.json({ ok: true, rates });
     } catch (e) {
-      return res.status(500).json({
-        ok: false,
-        error: "운임 표 조회 실패",
-        details: e.response?.data || e.message || String(e),
-      });
+      return res.status(500).json({ ok: false, error: "운임 표 조회 실패", details: e.response?.data || e.message || String(e) });
     }
   });
 };
