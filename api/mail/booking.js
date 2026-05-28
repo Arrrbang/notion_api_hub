@@ -256,41 +256,32 @@ module.exports = function registerMailBookingRoutes(app) {
       });
     }
   });
-    app.get("/api/mail/booking/pol-options", async (req, res) => {
+  
+  app.get("/api/mail/booking/pol-options", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
-      const forwarderId = String(req.query.forwarderId || "").trim();
   
-      if (!poe || !forwarderId) {
+      if (!poe) {
         return res.status(400).json({
           ok: false,
-          error: "poe와 forwarderId 값이 필요합니다.",
+          error: "poe 값이 필요합니다.",
         });
       }
   
+      // 노션 필터에서 포워딩 relation 조건 삭제, POE만 체크
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
         filter: {
-          and: [
-            {
-              property: "POE",
-              multi_select: {
-                contains: poe,
-              },
-            },
-            {
-              property: "포워딩 연락처 및 운임 연결",
-              relation: {
-                contains: forwarderId,
-              },
-            },
-          ],
+          property: "POE",
+          multi_select: {
+            contains: poe,
+          },
         },
       });
   
       const polSet = new Set();
   
       ratePages.forEach(page => {
-        const podList = getMultiSelectNames(page.properties?.["POD"]);
+        const podList = getMultiSelectNames(page.properties?.["POD"]); // POL(노션에서는 POD 속성)
         podList.forEach(v => {
           if (v) polSet.add(v);
         });
