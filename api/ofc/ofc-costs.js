@@ -129,6 +129,7 @@ module.exports = function registerPoeCostsRoutes(app) {
         return {
           id: page.id,
           name: richTextToPlain(props["항목명"]?.title || []), 
+          poeList: getMultiSelectNames(props["POE"]),
           cost20: Math.round(raw20),
           cost40: Math.round(raw40),
           costCONSOLE: Math.round(rawCONSOLE)
