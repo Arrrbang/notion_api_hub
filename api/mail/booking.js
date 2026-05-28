@@ -5,7 +5,8 @@ const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 // 하드코딩 DB ID
 const OCEAN_RATE_DB_ID = "33e0b10191ce806fb83cf8013b9a74b3";
 const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79";
-const PORT_CODE_DB_ID = "35a0b10191ce808fbac0d21a8968f3c3";
+// 🚨 수정됨: 새로운 포트 코드 DB ID 적용
+const PORT_CODE_DB_ID = "36e0b10191ce804492fce82a1d2719c3";
 
 const PROP_POE = "POE";
 const PROP_RELATION = "포워딩 연락처 및 운임 연결";
@@ -94,11 +95,17 @@ async function getPortMapCached() {
   portPages.forEach(page => {
     const props = page.properties || {};
 
-    const code = getTitle(props[PROP_PORT_CODE]);
-    const name = getRichText(props[PROP_PORT_NAME]);
+    // 🚨 수정됨: PORT NAME이 제목(Title), PORT CODE가 텍스트(Rich Text)
+    const name = getTitle(props[PROP_PORT_NAME]);
+    const rawCodes = getRichText(props[PROP_PORT_CODE]);
 
-    if (code) {
-      portMap[code] = name || code;
+    if (rawCodes) {
+      // 🚨 수정됨: 텍스트에 여러 개의 코드가 콤마로 들어있을 수 있으므로 분리해서 매핑
+      const codes = rawCodes.split(",").map(c => c.trim()).filter(c => c !== "");
+      
+      codes.forEach(code => {
+        portMap[code] = name || code;
+      });
     }
   });
 
@@ -336,7 +343,6 @@ module.exports = function registerMailBookingRoutes(app) {
           forwarder: props["포워딩"]?.select?.name || "-",
           carrier: props["선사"]?.select?.name || "-",
           
-          // 💡 수정된 부분: 일반 숫자가 아닌 '수식' 결과값(number)을 가져옵니다.
           dr20: props["20DR 합계"]?.formula?.number || 0,
           hc40: props["40HC 합계"]?.formula?.number || 0,
           
