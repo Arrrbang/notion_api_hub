@@ -1,7 +1,7 @@
 // api/ofc/ofc-costs.js
 const axios = require("axios");
 
-const TARGET_DB_ID = "3420b10191ce80c2a864d2e33aa87b05"; // 메인 OFC 데이터베이스
+const TARGET_DB_ID = "3720b10191ce80e291e3ca782bb6f0a1"; // 메인 OFC 데이터베이스
 const EXTRA_DB_ID = "3450b10191ce803ca0a9e700df8af7b8";  // 추가 비용 데이터베이스
 const MAPPING_DB_ID = "36e0b10191ce804492fce82a1d2719c3"; // POE 매핑 데이터베이스
 
@@ -107,8 +107,7 @@ module.exports = function registerPoeCostsRoutes(app) {
           poeList: getMultiSelectNames(props["POE"]),
           cost20DR: raw20DR !== null ? Math.round(raw20DR) : null,
           cost40HC: raw40HC !== null ? Math.round(raw40HC) : null,
-          validity: getDateProperty(props["VALIDITY"]),   
-          remarks: richTextToPlain(props["특이사항"]?.rich_text || [])
+          validity: getDateProperty(props["VALIDITY"])
         };
       });
 
