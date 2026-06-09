@@ -9,8 +9,7 @@ const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79"; // 포워딩
 const PORT_CODE_DB_ID = "36e0b10191ce804492fce82a1d2719c3";
 
 const PROP_POE = "POE";
-// 1️⃣ 관계형 속성 이름 변경
-const PROP_RELATION = "포워딩 운임 등록"; 
+const PROP_RELATION = "포워딩 연락처 및 운임 연결"; 
 const PROP_PORT_CODE = "PORT CODE";
 const PROP_PORT_NAME = "PORT NAME";
 const PROP_CONTACT = "연락처";
