@@ -2,10 +2,8 @@ const axios = require("axios");
 
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
-// 하드코딩 DB ID
 const OCEAN_RATE_DB_ID = "36f0b10191ce80939698cc910e2df427"; // 해상운임 DB
 const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79"; // 포워딩 연락처 DB
-// 🚨 36e... 매핑 DB 적용 (PORT NAME이 제목, PORT CODE가 텍스트)
 const PORT_CODE_DB_ID = "36e0b10191ce804492fce82a1d2719c3";
 
 const PROP_POE = "POE";
@@ -19,9 +17,8 @@ let portMapCacheTime = 0;
 let poeOptionsCache = null;
 let poeOptionsCacheTime = 0;
 
-// 🚨 테스트용 무캐시 설정 (나중에 배포 시 1000 * 60 * 60 * 24 * 7 로 변경하세요)
-const PORT_MAP_CACHE_TTL = 0; 
-const POE_OPTIONS_CACHE_TTL = 0; 
+const PORT_MAP_CACHE_TTL = 1000 * 60 * 60 * 24 * 7; 
+const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 60 * 24 * 7;
 
 function notionHeaders() {
   if (!NOTION_TOKEN) {
