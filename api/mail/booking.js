@@ -133,7 +133,7 @@ module.exports = function registerMailBookingRoutes(app) {
         .map(code => ({
           code,
           name: portMap[code] || code,
-          label: portMap[code] ? `${portMap[code]} (${code})` : code, 
+          label: portMap[code] || code, 
         }));
   
       poeOptionsCache = options;
