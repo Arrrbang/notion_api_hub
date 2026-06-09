@@ -3,7 +3,7 @@ const axios = require("axios");
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
 // 하드코딩 DB ID
-const OCEAN_RATE_DB_ID = "33e0b10191ce806fb83cf8013b9a74b3"; // 해상운임 DB
+const OCEAN_RATE_DB_ID = "3720b10191ce80e291e3ca782bb6f0a1"; // 해상운임 DB
 const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79"; // 포워딩 연락처 DB
 
 // 🚨 36e... 매핑 DB 적용 (PORT NAME이 제목, PORT CODE가 텍스트)
