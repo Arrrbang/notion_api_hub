@@ -5,12 +5,12 @@ const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 // 하드코딩 DB ID
 const OCEAN_RATE_DB_ID = "36f0b10191ce80939698cc910e2df427"; // 해상운임 DB
 const FORWARDER_CONTACT_DB_ID = "35a0b10191ce805eb7b4d62784874a79"; // 포워딩 연락처 DB
-
 // 🚨 36e... 매핑 DB 적용 (PORT NAME이 제목, PORT CODE가 텍스트)
 const PORT_CODE_DB_ID = "36e0b10191ce804492fce82a1d2719c3";
 
 const PROP_POE = "POE";
-const PROP_RELATION = "포워딩 연락처 및 운임 연결";
+// 1️⃣ 관계형 속성 이름 변경
+const PROP_RELATION = "포워딩 운임 등록"; 
 const PROP_PORT_CODE = "PORT CODE";
 const PROP_PORT_NAME = "PORT NAME";
 const PROP_CONTACT = "연락처";
@@ -78,7 +78,6 @@ async function retrievePage(pageId) {
   return response.data;
 }
 
-// ⭐️ 36e 매핑 DB 파싱 로직
 async function getPortMapCached() {
   const now = Date.now();
   if (portMapCache && now - portMapCacheTime < PORT_MAP_CACHE_TTL) {
@@ -90,16 +89,13 @@ async function getPortMapCached() {
 
   portPages.forEach(page => {
     const props = page.properties || {};
-
-    // 🚨 36e 구조: PORT NAME이 제목(Title), PORT CODE가 텍스트(Rich Text)
     const name = getTitle(props[PROP_PORT_NAME]);
     const rawCodes = getRichText(props[PROP_PORT_CODE]);
 
     if (rawCodes) {
-      // 텍스트에 여러 개의 코드가 콤마로 들어있을 수 있으므로 분리해서 매핑
       const codes = rawCodes.split(",").map(c => c.trim()).filter(c => c !== "");
       codes.forEach(code => {
-        portMap[code] = name || code; // { "USLAX": "LGB/LA" } 형태로 저장
+        portMap[code] = name || code; 
       });
     }
   });
@@ -111,7 +107,7 @@ async function getPortMapCached() {
 
 module.exports = function registerMailBookingRoutes(app) {
   
-  // 1번 드롭다운: POE 옵션 조회 (⭐️ 속도 개선 병렬 처리 적용)
+  // 1번 드롭다운: POE 옵션 조회
   app.get("/api/mail/booking/poe-options", async (req, res) => {
     try {
       const now = Date.now();
@@ -119,7 +115,6 @@ module.exports = function registerMailBookingRoutes(app) {
         return res.json({ ok: true, cached: true, options: poeOptionsCache });
       }
   
-      // 🚨 병렬 처리 (Promise.all) - 해상운임 DB와 매핑 DB를 동시에 불러옴
       const [ratePages, portMap] = await Promise.all([
         queryDatabase(OCEAN_RATE_DB_ID),
         getPortMapCached()
@@ -133,13 +128,11 @@ module.exports = function registerMailBookingRoutes(app) {
         });
       });
   
-      // 매핑 데이터를 기반으로 라벨 생성
       const options = Array.from(poeSet)
         .sort()
         .map(code => ({
           code,
           name: portMap[code] || code,
-          // portMap에 값이 있으면 "이름 (코드)", 없으면 그냥 "코드" 노출
           label: portMap[code] ? `${portMap[code]} (${code})` : code, 
         }));
   
@@ -217,7 +210,7 @@ module.exports = function registerMailBookingRoutes(app) {
     }
   });
   
-  // POL 옵션
+  // 2️⃣ POL 옵션 전면 수정: POE 태그 내부의 (BUS), (INC) 텍스트를 감지하도록 변경
   app.get("/api/mail/booking/pol-options", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
@@ -231,9 +224,15 @@ module.exports = function registerMailBookingRoutes(app) {
   
       const polSet = new Set();
       ratePages.forEach(page => {
-        const podList = getMultiSelectNames(page.properties?.["POD"]); // POL(노션에서는 POD 속성)
-        podList.forEach(v => {
-          if (v) polSet.add(v);
+        // 기존의 POD가 아닌 POE 리스트를 불러옵니다.
+        const poeList = getMultiSelectNames(page.properties?.["POE"]); 
+        poeList.forEach(v => {
+          if (v.includes("(BUS)")) {
+            polSet.add("BUSAN");
+          }
+          if (v.includes("(INC)")) {
+            polSet.add("INCHEON");
+          }
         });
       });
   
@@ -266,8 +265,9 @@ module.exports = function registerMailBookingRoutes(app) {
           id: page.id,
           forwarder: props["포워딩"]?.select?.name || "-",
           carrier: props["선사"]?.select?.name || "-",
-          dr20: props["20DR 합계"]?.formula?.number || 0,
-          hc40: props["40HC 합계"]?.formula?.number || 0,
+          // 3️⃣ 수식 속성 이름 변경 반영
+          dr20: props["20DR 최종"]?.formula?.number || 0,
+          hc40: props["40HC 최종"]?.formula?.number || 0,
           validity: validityStr || "-",
         };
       });
