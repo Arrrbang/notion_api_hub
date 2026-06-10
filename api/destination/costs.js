@@ -450,18 +450,24 @@ function registerCostsRoutes(app) {
   });
 
   app.get('/api/poe/by-company', async (req, res) => {
-    // 생략 없이 기존 코드 유지
     try {
-      const { country, region, company } = req.query;
+      const { country, region, company, cargo } = req.query;
       const dbIds = getCountryDbIds(country);
       const filters = [];
+      
       if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
+      // 화물타입 필터 추가
+      if (cargo) filters.push({ property: CARGO_PROP, multi_select: { contains: cargo } });
+      
       const pages = [];
       for (const id of dbIds) {
-        const resp = await axios.post(`https://api.notion.com/v1/databases/${id}/query`, { filter: filters.length ? { and: filters } : undefined }, { headers: notionHeaders() });
+        const resp = await axios.post(`https://api.notion.com/v1/databases/${id}/query`, { 
+          filter: filters.length ? { and: filters } : undefined 
+        }, { headers: notionHeaders() });
         pages.push(...resp.data.results);
       }
+      
       const set = new Set();
       pages.forEach(p => getMultiSelectNames(p.properties[POE_PROP]).forEach(poe => set.add(poe)));
       res.json({ poes: Array.from(set).sort() });
@@ -469,18 +475,23 @@ function registerCostsRoutes(app) {
   });
 
   app.get('/api/cargo-types/by-partner', async (req, res) => {
-    // 생략 없이 기존 코드 유지
     try {
-      const { country, company, poe } = req.query;
+      const { country, region, company } = req.query;
       const dbIds = getCountryDbIds(country);
       const filters = [];
+      
+      // region 필터 추가
+      if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
-      if (poe) filters.push({ property: POE_PROP, multi_select: { contains: poe } });
+      
       const pages = [];
       for (const id of dbIds) {
-        const resp = await axios.post(`https://api.notion.com/v1/databases/${id}/query`, { filter: filters.length ? { and: filters } : undefined }, { headers: notionHeaders() });
+        const resp = await axios.post(`https://api.notion.com/v1/databases/${id}/query`, { 
+          filter: filters.length ? { and: filters } : undefined 
+        }, { headers: notionHeaders() });
         pages.push(...resp.data.results);
       }
+      
       const set = new Set();
       pages.forEach(p => getMultiSelectNames(p.properties[CARGO_PROP]).forEach(t => set.add(t)));
       res.json({ types: Array.from(set).sort() });
