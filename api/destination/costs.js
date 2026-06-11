@@ -414,7 +414,7 @@ function registerCostsRoutes(app) {
 
         if (region && rNames.length > 0 && !rNames.includes(region)) return null;
         if (company && cName !== company) return null;
-        if (poe && !pNames.includes(poe)) return null;
+        if (poe && pNames.length > 0 && !pNames.includes(poe)) return null;
         if (roles.length && !cargoNames.some(c => roles.includes(c))) return null;
 
         return {
