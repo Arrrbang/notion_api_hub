@@ -386,7 +386,12 @@ function registerCostsRoutes(app) {
       const filters = [];
       if (region) filters.push({ or: [{ property: REGION_PROP, multi_select: { contains: region } }, { property: REGION_PROP, multi_select: { is_empty: true } }] });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
-      if (poe) filters.push({ property: POE_PROP, multi_select: { contains: poe } });
+      if (poe) filters.push({
+        or: [
+          { property: POE_PROP, multi_select: { contains: poe } },
+          { property: POE_PROP, multi_select: { is_empty: true } }
+        ]
+      });
 
       const pages = [];
       for (const id of dbIds) {
