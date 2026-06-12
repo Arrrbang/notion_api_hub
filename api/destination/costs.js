@@ -416,11 +416,13 @@ function registerCostsRoutes(app) {
 
         const rNames = getMultiSelectNames(props[REGION_PROP]), cName = getSelectName(props[COMPANY_PROP]);
         const pNames = getMultiSelectNames(props[POE_PROP]), cargoNames = getMultiSelectNames(props[CARGO_PROP]);
-
+        const containerTypes = getMultiSelectNames(props[CONTAINER_TYPE_PROP]);
+        
         if (region && rNames.length > 0 && !rNames.includes(region)) return null;
         if (company && cName !== company) return null;
         if (poe && pNames.length > 0 && !pNames.includes(poe)) return null;
         if (roles.length && !cargoNames.some(c => roles.includes(c))) return null;
+        if (containerTypes.length > 0 && !containerTypes.includes(type)) return null;
 
         return {
           id: page.id,
