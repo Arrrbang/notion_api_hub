@@ -421,13 +421,16 @@ function registerCostsRoutes(app) {
         if (region && rNames.length > 0 && !rNames.includes(region)) return null;
         if (company && cName !== company) return null;
         if (poe && pNames.length > 0 && !pNames.includes(poe)) return null;
-        if (roles.length && !cargoNames.some(c => roles.includes(c))) return null;
+        
+        // ✨ 수정: 화물타입이 비어있지 않은(length > 0) 경우에만 필터링 진행
+        if (roles.length && cargoNames.length > 0 && !cargoNames.some(c => roles.includes(c))) return null;
+        
         if (containerTypes.length > 0 && !containerTypes.includes(type)) return null;
 
         return {
           id: page.id,
           item: getTitle(props, ITEM_PROP) || getTitle(props, 'Name') || '',
-          rowType: getSelectName(props[ROW_TYPE_PROP]) || '', // ✨ 백엔드: CDS, ADD, TAX, OTC 전달
+          rowType: getSelectName(props[ROW_TYPE_PROP]) || '', 
           order: getNumberFromProp(props[ORDER_PROP]) ?? 9999,
           [type]: computeAmount(props, type, cbm, region) ?? null,
           extra: getRichTextHtml(props, EXTRA_PROP) || '',
@@ -439,7 +442,6 @@ function registerCostsRoutes(app) {
   });
 
   app.get('/api/companies/by-region', async (req, res) => {
-    // 생략 없이 기존 코드 유지
     try {
       const { country, region } = req.query;
       const dbIds = getCountryDbIds(country);
@@ -464,8 +466,14 @@ function registerCostsRoutes(app) {
       
       if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
-      // 화물타입 필터 추가
-      if (cargo) filters.push({ property: CARGO_PROP, multi_select: { contains: cargo } });
+      
+      // ✨ 수정: 화물타입 필터 (선택한 화물타입이거나, 비어있거나)
+      if (cargo) filters.push({
+        or: [
+          { property: CARGO_PROP, multi_select: { contains: cargo } },
+          { property: CARGO_PROP, multi_select: { is_empty: true } }
+        ]
+      });
       
       const pages = [];
       for (const id of dbIds) {
@@ -487,7 +495,6 @@ function registerCostsRoutes(app) {
       const dbIds = getCountryDbIds(country);
       const filters = [];
       
-      // region 필터 추가
       if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
       
@@ -517,7 +524,14 @@ function registerCostsRoutes(app) {
       if (region) filters.push({ property: REGION_PROP, multi_select: { contains: region } });
       if (company) filters.push({ property: COMPANY_PROP, select: { equals: company } });
       if (poe) filters.push({ property: POE_PROP, multi_select: { contains: poe } });
-      if (cargo) filters.push({ property: CARGO_PROP, multi_select: { contains: cargo } });
+      
+      // ✨ 수정: 화물타입 필터 (선택한 화물타입이거나, 비어있거나)
+      if (cargo) filters.push({
+        or: [
+          { property: CARGO_PROP, multi_select: { contains: cargo } },
+          { property: CARGO_PROP, multi_select: { is_empty: true } }
+        ]
+      });
   
       const pages = [];
   
@@ -533,20 +547,20 @@ function registerCostsRoutes(app) {
       const order = ['20FT', '40HC', 'CONSOLE'];
       const set = new Set();
   
-    let hasAnyContainerType = false;
-    
-    pages.forEach(p => {
-      const names = getMultiSelectNames(p.properties[CONTAINER_TYPE_PROP]);
-    
-      if (names.length > 0) {
-        hasAnyContainerType = true;
-        names.forEach(t => set.add(t));
-      }
-    });
-    
-    const types = hasAnyContainerType
-      ? order.filter(t => set.has(t))
-      : order;
+      let hasAnyContainerType = false;
+      
+      pages.forEach(p => {
+        const names = getMultiSelectNames(p.properties[CONTAINER_TYPE_PROP]);
+      
+        if (names.length > 0) {
+          hasAnyContainerType = true;
+          names.forEach(t => set.add(t));
+        }
+      });
+      
+      const types = hasAnyContainerType
+        ? order.filter(t => set.has(t))
+        : order;
   
       res.json({ types });
     } catch (e) {
