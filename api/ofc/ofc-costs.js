@@ -47,16 +47,23 @@ module.exports = function registerPoeCostsRoutes(app) {
         return res.status(400).json({ ok: false, error: "POE를 입력하세요. (예: LA)" });
       }
 
-      // 1. 매핑 DB에서 CODE 찾기
+    // 1. 매핑 DB에서 CODE 찾기
       const mappingFilter = { filter: { property: "PORT NAME", title: { equals: frontPoe } } };
       const mappingResp = await axios.post(`https://api.notion.com/v1/databases/${MAPPING_DB_ID}/query`, mappingFilter, { headers: notionHeaders() });
 
       let targetPoes = []; 
       if (mappingResp.data.results && mappingResp.data.results.length > 0) {
-        const rawCodes = richTextToPlain(mappingResp.data.results[0].properties["PORT CODE"]?.rich_text || []);
-        if (rawCodes) {
-          targetPoes = rawCodes.split(",").map(code => code.trim().toUpperCase()).filter(code => code.length > 0);
-        }
+        // ✅ 개선점: 검색된 모든 results를 순회하며 PORT CODE를 전부 수집함
+        mappingResp.data.results.forEach(result => {
+          const rawCodes = richTextToPlain(result.properties["PORT CODE"]?.rich_text || []);
+          if (rawCodes) {
+            const codes = rawCodes.split(",").map(code => code.trim().toUpperCase()).filter(code => code.length > 0);
+            targetPoes.push(...codes);
+          }
+        });
+        
+        // ✅ 중복된 코드가 들어가는 것을 방지하기 위해 Set을 사용하여 고유값만 남김
+        targetPoes = [...new Set(targetPoes)];
       }
 
       if (targetPoes.length === 0) {
