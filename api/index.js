@@ -23,6 +23,7 @@ const registerTrcRoutes         = require('./trc/cal');
 const registerPoeCostsRoutes    = require('./ofc/ofc-costs');
 const registerMailBookingRoutes = require('./mail/booking');
 const registerSalesInfoRoutes = require('./info/sales_info');
+const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
 
 const app = express();
 
@@ -138,6 +139,7 @@ registerTrcRoutes(app);
 registerPoeCostsRoutes(app);
 registerMailBookingRoutes(app);
 registerSalesInfoRoutes(app);
+registerQuotationSaveLoadRoutes(app);
 
 
 /* ─────────────────────────────────────────────────────────
