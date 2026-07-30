@@ -12,12 +12,28 @@ function notionHeaders() {
     };
 }
 
+// 청크 분할 및 최대 100개 제한 안전장치 추가
 function chunkString(str, length) {
     const chunks = [];
     for (let i = 0; i < str.length; i += length) {
         chunks.push(str.substring(i, i + length));
     }
-    return chunks;
+    // 노션 rich_text 배열 최대 한도(100개) 안전 제어
+    return chunks.slice(0, 100);
+}
+
+// 노션 전용 YYYY-MM-DD 날짜 추출 함수
+function formatIsoDate(dateStr) {
+    if (!dateStr) return null;
+    // 숫자 4자리-2자리-2자리 추출 시도
+    const match = dateStr.match(/(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})/);
+    if (match) {
+        const yyyy = match[1];
+        const mm = match[2].padStart(2, '0');
+        const dd = match[3].padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    return null;
 }
 
 module.exports = function(app) {
@@ -27,13 +43,15 @@ module.exports = function(app) {
         try {
             const { quoteNo, customer, date, totalAmount, sales, rawData, pageId } = req.body;
 
-            let cleanDate = date ? date.replace(/\s*\(.*?\)\s*/g, '').replace(/\//g, '-').trim() : '';
+            // 💡 1. 날짜 안정성 강화
+            let cleanDate = formatIsoDate(date);
             if (!cleanDate) {
                 const today = new Date();
                 const kstOffset = 9 * 60 * 60 * 1000;
                 cleanDate = new Date(today.getTime() + kstOffset).toISOString().split('T')[0];
             }
 
+            // 💡 2. 견적 번호 생성
             let finalQuoteNo = quoteNo;
             if (!finalQuoteNo || finalQuoteNo.trim() === '') {
                 const salesPrefix = sales ? sales.split(' ')[0].toUpperCase() : 'UNKNOWN';
@@ -42,7 +60,7 @@ module.exports = function(app) {
                 const queryResp = await axios.post(`https://api.notion.com/v1/databases/${QUOTATION_DB_ID}/query`, {
                     filter: {
                         and: [
-                            { property: "Sales", select: { equals: sales } },
+                            { property: "Sales", select: { equals: sales || 'Unassigned' } },
                             { property: "Date", date: { equals: cleanDate } }
                         ]
                     }
@@ -53,44 +71,47 @@ module.exports = function(app) {
                 finalQuoteNo = `${salesPrefix}-${dateStr}-${sequence}`;
             }
 
+            // 💡 3. 데이터 청크 변환 (안전 처리)
             const jsonString = JSON.stringify(rawData || {});
             const chunkedData = chunkString(jsonString, 2000).map(chunk => ({
                 text: { content: chunk }
             }));
 
-            // 💡 [핵심] pageId가 넘어오면 덮어쓰기(PATCH), 없으면 새 글 작성(POST)
+            const properties = {
+                "Quote No": { title: [{ text: { content: finalQuoteNo } }] },
+                "Customer": { rich_text: [{ text: { content: customer || 'Unknown' } }] },
+                "Date": { date: { start: cleanDate } },
+                "Total Amount": { number: Number(totalAmount) || 0 },
+                "Sales": { select: { name: sales || 'Unassigned' } },
+                "Raw Data": { rich_text: chunkedData }
+            };
+
+            // 💡 4. pageId 유무에 따라 PATCH 또는 POST 실행
             if (pageId) {
                 const updateResp = await axios.patch(`https://api.notion.com/v1/pages/${pageId}`, {
-                    properties: {
-                        "Quote No": { title: [{ text: { content: finalQuoteNo } }] },
-                        "Customer": { rich_text: [{ text: { content: customer || 'Unknown' } }] },
-                        "Date": { date: { start: cleanDate } },
-                        "Total Amount": { number: Number(totalAmount) || 0 },
-                        "Sales": { select: { name: sales || 'Unassigned' } },
-                        "Raw Data": { rich_text: chunkedData }
-                    }
+                    properties: properties
                 }, { headers: notionHeaders() });
 
-                res.json({ ok: true, quoteNo: finalQuoteNo, pageId: updateResp.data.id });
+                return res.json({ ok: true, quoteNo: finalQuoteNo, pageId: updateResp.data.id });
             } else {
                 const createResp = await axios.post('https://api.notion.com/v1/pages', {
                     parent: { database_id: QUOTATION_DB_ID },
-                    properties: {
-                        "Quote No": { title: [{ text: { content: finalQuoteNo } }] },
-                        "Customer": { rich_text: [{ text: { content: customer || 'Unknown' } }] },
-                        "Date": { date: { start: cleanDate } },
-                        "Total Amount": { number: Number(totalAmount) || 0 },
-                        "Sales": { select: { name: sales || 'Unassigned' } },
-                        "Raw Data": { rich_text: chunkedData }
-                    }
+                    properties: properties
                 }, { headers: notionHeaders() });
 
-                res.json({ ok: true, quoteNo: finalQuoteNo, pageId: createResp.data.id });
+                return res.json({ ok: true, quoteNo: finalQuoteNo, pageId: createResp.data.id });
             }
 
         } catch (error) {
-            console.error('견적 저장 에러:', error.response?.data || error.message);
-            res.status(500).json({ ok: false, error: '견적서를 저장하지 못했습니다.' });
+            // 💡 [핵심 해결] 노션 API에서 던진 진짜 에러 메시지를 프론트엔드로 반환하여 원인 파악 가능하게 변경
+            const notionErrorDetails = error.response?.data || error.message;
+            console.error('❌ 노션 API 저장 에러 상세:', JSON.stringify(notionErrorDetails, null, 2));
+
+            return res.status(500).json({ 
+                ok: false, 
+                error: '노션 저장 실패',
+                details: notionErrorDetails 
+            });
         }
     });
 
@@ -125,7 +146,7 @@ module.exports = function(app) {
             res.json({ ok: true, list: results });
         } catch (error) {
             console.error('견적 목록 조회 에러:', error.response?.data || error.message);
-            res.status(500).json({ ok: false, error: '목록을 불러오지 못했습니다.' });
+            res.status(500).json({ ok: false, error: '목록을 불러오지 못했습니다.', details: error.response?.data });
         }
     });
 
@@ -139,7 +160,7 @@ module.exports = function(app) {
             res.json({ ok: true, message: '삭제 완료' });
         } catch (error) {
             console.error('견적 삭제 에러:', error.response?.data || error.message);
-            res.status(500).json({ ok: false, error: '견적서를 삭제하지 못했습니다.' });
+            res.status(500).json({ ok: false, error: '견적서를 삭제하지 못했습니다.', details: error.response?.data });
         }
     });
 };
