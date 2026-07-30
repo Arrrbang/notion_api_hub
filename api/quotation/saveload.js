@@ -48,19 +48,19 @@ module.exports = function(app) {
 
             let finalQuoteNo = quoteNo;
             if (!finalQuoteNo || finalQuoteNo.trim() === '') {
-                const salesPrefix = (sales && sales !== '') ? sales.split(' ')[0].toUpperCase() : 'PASS';
+                const salesPrefix = (sales && sales.trim() !== '') ? sales.split(' ')[0].toUpperCase() : 'PASS';
                 const dateStr = cleanDate.replace(/-/g, ''); 
 
-                // 💡 에러 방지: 담당자가 비어있으면 담당자 필터를 빼고 검색합니다.
+                // 💡 에러 방지: 담당자가 비어있으면 담당자 필터를 빼고 검색
                 const queryPayload = {
                     filter: { property: "Date", date: { equals: cleanDate } }
                 };
                 
-                if (sales && sales !== '') {
+                if (sales && sales.trim() !== '') {
                     queryPayload.filter = {
                         and: [
                             { property: "Date", date: { equals: cleanDate } },
-                            { property: "Sales", select: { equals: sales } }
+                            { property: "Sales", select: { equals: sales.trim() } }
                         ]
                     };
                 }
@@ -77,6 +77,7 @@ module.exports = function(app) {
                 text: { content: chunk }
             }));
 
+            // 💡 에러 방지: 기본 속성 세팅
             const properties = {
                 "Quote No": { title: [{ text: { content: finalQuoteNo } }] },
                 "Customer": { rich_text: [{ text: { content: customer || '-' } }] },
@@ -85,9 +86,9 @@ module.exports = function(app) {
                 "Raw Data": { rich_text: chunkedData }
             };
 
-            // 💡 에러 방지: 담당자가 있을 때만 Sales(Select 속성)를 추가합니다.
-            if (sales && sales !== '') {
-                properties["Sales"] = { select: { name: sales } };
+            // 💡 에러 방지: 담당자가 있을 때만 Sales(Select)를 추가하여 DB 충돌 100% 방지
+            if (sales && sales.trim() !== '') {
+                properties["Sales"] = { select: { name: sales.trim() } };
             }
 
             if (pageId) {
@@ -106,8 +107,9 @@ module.exports = function(app) {
             }
 
         } catch (error) {
-            console.error('❌ 노션 저장 에러 상세:', error.response?.data || error.message);
-            return res.status(500).json({ ok: false, error: '저장 실패', details: error.response?.data });
+            const notionErrorDetails = error.response?.data || error.message;
+            console.error('❌ 노션 API 저장 에러 상세:', JSON.stringify(notionErrorDetails, null, 2));
+            return res.status(500).json({ ok: false, error: '저장 실패', details: notionErrorDetails });
         }
     });
 
@@ -116,13 +118,9 @@ module.exports = function(app) {
         try {
             const { sales } = req.body;
             
-            const queryPayload = {
-                sorts: [{ property: "Date", direction: "descending" }]
-            };
-            
-            // 💡 에러 방지: 담당자가 지정되었을 때만 필터를 추가합니다.
-            if (sales && sales !== '') {
-                queryPayload.filter = { property: "Sales", select: { equals: sales } };
+            const queryPayload = { sorts: [{ property: "Date", direction: "descending" }] };
+            if (sales && sales.trim() !== '') {
+                queryPayload.filter = { property: "Sales", select: { equals: sales.trim() } };
             }
 
             const queryResp = await axios.post(`https://api.notion.com/v1/databases/${QUOTATION_DB_ID}/query`, queryPayload, { headers: notionHeaders() });
@@ -153,7 +151,7 @@ module.exports = function(app) {
         }
     });
 
-    // [3] 견적서 영구 삭제(아카이브) API
+    // [3] 견적서 영구 삭제 API
     app.delete('/api/quotation/delete/:id', async (req, res) => {
         try {
             const pageId = req.params.id;
