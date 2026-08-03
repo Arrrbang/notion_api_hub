@@ -38,7 +38,6 @@ function getRichText(props, key) {
 function getSelectName(prop) {
   return prop?.select?.name || '';
 }
-// 💡 [추가] 숫자 타입 가져오는 헬퍼 함수
 function getNumber(props, key) {
   const col = props?.[key];
   if (!col || col.type !== 'number') return 0;
@@ -46,9 +45,7 @@ function getNumber(props, key) {
 }
 
 function registerSalesInfoRoutes(app) {
-  // =========================================================================
   // 1. 전체/특정 직원 조회 API
-  // =========================================================================
   app.get('/api/sales-info', async (req, res) => {
     try {
       const { pass_id } = req.query;
@@ -67,9 +64,7 @@ function registerSalesInfoRoutes(app) {
         { headers: notionHeaders() }
       );
 
-      const pages = response.data.results || [];
-
-      const salesList = pages.map(page => {
+      const salesList = (response.data.results || []).map(page => {
         const props = page.properties || {};
         return {
           id: page.id,
@@ -80,8 +75,8 @@ function registerSalesInfoRoutes(app) {
           dir: getRichText(props, 'DIR'),
           email: getRichText(props, 'E-MAIL'),
           position: getSelectName(props, '직책'),
-          // 💡 [추가] DB에 생성한 profit(숫자) 속성 읽어오기
-          profit: getNumber(props, 'profit'), 
+          // 💡 [핵심] 노션의 0.1을 화면용 10으로 변환 (100 곱하기)
+          profit: getNumber(props, 'profit') * 100, 
         };
       });
 
@@ -97,15 +92,13 @@ function registerSalesInfoRoutes(app) {
     }
   });
 
-  // =========================================================================
-  // 2. 💡 [추가] 직원 수익률(Profit) 업데이트 API
-  // =========================================================================
+  // 2. 직원 수익률(Profit) 업데이트 API
   app.post('/api/sales-info/profit', async (req, res) => {
     try {
       const { pass_id, profit } = req.body;
       if (!pass_id) return res.status(400).json({ ok: false, error: 'pass_id가 필요합니다.' });
 
-      // ① 해당 직원의 페이지 ID 먼저 찾기
+      // ① 해당 직원의 페이지 ID 찾기
       const queryPayload = { filter: { property: 'PASS_ID', title: { equals: pass_id.trim() } } };
       const queryRes = await axios.post(`https://api.notion.com/v1/databases/${SALES_DB_ID}/query`, queryPayload, { headers: notionHeaders() });
       
@@ -114,10 +107,12 @@ function registerSalesInfoRoutes(app) {
       }
       const pageId = queryRes.data.results[0].id;
 
-      // ② 노션 페이지의 'profit' 숫자 속성 덮어쓰기
+      // ② 💡 [핵심] 화면의 10을 노션용 0.1로 변환 (100 나누기)
+      const notionProfitValue = Number(profit) / 100;
+
       await axios.patch(`https://api.notion.com/v1/pages/${pageId}`, {
         properties: {
-          'profit': { number: Number(profit) }
+          'profit': { number: notionProfitValue }
         }
       }, { headers: notionHeaders() });
 
@@ -125,7 +120,11 @@ function registerSalesInfoRoutes(app) {
 
     } catch (e) {
       console.error('Profit Update Error:', e.response?.data || e.message);
-      return res.status(500).json({ ok: false, error: 'Update failed' });
+      return res.status(500).json({ 
+        ok: false, 
+        error: 'Update failed',
+        details: e.response?.data || e.message 
+      });
     }
   });
 }
