@@ -75,8 +75,8 @@ function registerSalesInfoRoutes(app) {
           dir: getRichText(props, 'DIR'),
           email: getRichText(props, 'E-MAIL'),
           position: getSelectName(props, '직책'),
-          // 💡 [핵심] 노션의 0.1을 화면용 10으로 변환 (100 곱하기)
-          profit: getNumber(props, 'profit') * 100, 
+          // 💡 [수정] 노션 DB에 있는 대문자 'Profit'으로 정확하게 호출
+          profit: getNumber(props, 'Profit') * 100, 
         };
       });
 
@@ -107,12 +107,12 @@ function registerSalesInfoRoutes(app) {
       }
       const pageId = queryRes.data.results[0].id;
 
-      // ② 💡 [핵심] 화면의 10을 노션용 0.1로 변환 (100 나누기)
       const notionProfitValue = Number(profit) / 100;
 
+      // ② 💡 [수정] 덮어쓸 때도 대문자 'Profit' 속성 지정
       await axios.patch(`https://api.notion.com/v1/pages/${pageId}`, {
         properties: {
-          'profit': { number: notionProfitValue }
+          'Profit': { number: notionProfitValue }
         }
       }, { headers: notionHeaders() });
 
