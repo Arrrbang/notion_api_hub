@@ -64,8 +64,20 @@ function registerSalesInfoRoutes(app) {
         { headers: notionHeaders() }
       );
 
-      const salesList = (response.data.results || []).map(page => {
+    const salesList = (response.data.results || []).map(page => {
         const props = page.properties || {};
+        
+        // 💡 [핵심 해결] 속성 이름이 '직책'이거나, 타입이 select인 속성을 동적으로 탐색해서 값을 쏙 빼옵니다.
+        let positionVal = '';
+        for (const [key, val] of Object.entries(props)) {
+          if (key === '직책' || val.type === 'select') {
+            if (val.type === 'select' && val.select?.name) {
+              positionVal = val.select.name;
+              break;
+            }
+          }
+        }
+
         return {
           id: page.id,
           pass_id: getTitle(props, 'PASS_ID'),
@@ -74,8 +86,7 @@ function registerSalesInfoRoutes(app) {
           tel: getRichText(props, 'TEL'),
           dir: getRichText(props, 'DIR'),
           email: getRichText(props, 'E-MAIL'),
-          position: getSelectName(props, '직책'),
-          // 💡 [수정] 노션 DB에 있는 대문자 'Profit'으로 정확하게 호출
+          position: positionVal, // 💡 동적으로 찾아낸 직책 값 대입
           profit: getNumber(props, 'Profit') * 100, 
         };
       });
