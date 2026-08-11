@@ -200,20 +200,26 @@ function calcConsoleAmount(props, cbm) {
 }
 
 function computeAmount(props, type, cbm, selectedRegion) {
-  let amount;
+  // 1. ✨ 가장 먼저 요청된 타입(20FT 또는 40HC) 자체의 속성값이 있는지 확인하고, 있으면 즉시 최우선 반환합니다.
+  if (type === '20FT' || type === '40HC') {
+    const directVal = getNumberFromProp(props[type]);
+    if (Number.isFinite(directVal)) {
+      return directVal;
+    }
+  }
 
-  // ✨ 수정: 계산식 값을 먼저 가져옵니다.
+  // 2. 20FT/40HC 직접 값이 없을 경우, 기존의 CBM 직접 입력(1~28) 또는 동적 CBM 계산을 수행합니다.
   const rawFormula = getTitle(props, FORMULA_PROP);
-
-  // ✨ 수정: rawFormula를 파라미터로 넘겨줍니다.
   const dynamicAmount = getDynamicCbmAmount(props, cbm, rawFormula);
   if (dynamicAmount !== undefined) return dynamicAmount;
 
+  // 3. 기존 베이스 코스트 및 콘솔 계산 로직
   const val20 = getNumberFromProp(props['20FT']);
   const val40 = getNumberFromProp(props['40HC']);
   const consoleAmt = calcConsoleAmount(props, cbm);
   const hasBaseCost = Number.isFinite(val20) || Number.isFinite(val40) || Number.isFinite(consoleAmt);
 
+  let amount;
   if (type === '20FT') amount = val20 ?? consoleAmt;
   else if (type === '40HC') amount = val40 ?? consoleAmt;
   else amount = consoleAmt;
