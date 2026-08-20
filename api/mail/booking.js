@@ -85,13 +85,20 @@ async function getPortMapCached() {
 
   portPages.forEach(page => {
     const props = page.properties || {};
-    const name = getTitle(props[PROP_PORT_NAME]);
+    
+    // ⭐️ 기존의 단일 변수 name 대신 nameStr로 묶음 문자열을 받아옵니다.
+    const nameStr = getTitle(props[PROP_PORT_NAME]); 
     const rawCodes = getRichText(props[PROP_PORT_CODE]);
 
     if (rawCodes) {
+      // ⭐️ 이름과 코드를 각각 쉼표(,) 기준으로 잘라 배열로 분리합니다.
+      const names = nameStr.split(",").map(n => n.trim());
       const codes = rawCodes.split(",").map(c => c.trim()).filter(c => c !== "");
-      codes.forEach(code => {
-        portMap[code] = name || code; 
+      
+      // ⭐️ 배열 인덱스 순서에 맞춰 1:1로 매핑합니다.
+      codes.forEach((code, index) => {
+        // 매칭되는 인덱스의 이름이 있으면 그 값을, 없으면 코드를 그대로 사용합니다.
+        portMap[code] = names[index] || code; 
       });
     }
   });
