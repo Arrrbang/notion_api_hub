@@ -22,6 +22,7 @@ const registerHomeNoticeRoutes = require('./home/notice');
 const registerTrcRoutes         = require('./trc/cal');
 const registerPoeCostsRoutes    = require('./ofc/ofc-costs');
 const registerMailBookingRoutes = require('./mail/booking');
+const registerMailGreenlightRoutes = require('./mail/greenlight');
 const registerSalesInfoRoutes = require('./info/sales_info');
 const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
 
@@ -138,6 +139,7 @@ registerHomeNoticeRoutes(app);
 registerTrcRoutes(app);
 registerPoeCostsRoutes(app);
 registerMailBookingRoutes(app);
+registerMailGreenlightRoutes(app);
 registerSalesInfoRoutes(app);
 registerQuotationSaveLoadRoutes(app);
 
