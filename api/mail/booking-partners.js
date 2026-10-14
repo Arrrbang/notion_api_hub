@@ -1,7 +1,11 @@
 const axios = require("axios");
 
 const PARTNER_DB_ID = "34a0b10191ce805aacefcf62acfa15f6";
+const PARTNER_INFO_DB_ID = "34a0b10191ce80c3b3aefd1fabbcbd55";
+
 const PROP_POE = "POE";
+const PROP_PARTNER_RELATION = "파트너 연결";
+const PROP_INFO_TITLE = "이름";
 
 function notionHeaders() {
   const token =
@@ -36,7 +40,6 @@ function normalizeSelectedPoe(value) {
 }
 
 function getRichText(prop) {
-  // 텍스트 조각을 먼저 합쳐서 대괄호를 추출합니다.
   return (prop?.rich_text || [])
     .map(item =>
       item.plain_text ?? item.text?.content ?? ""
@@ -56,9 +59,7 @@ function getTitle(properties) {
     .join("");
 }
 
-// "[USNYC] NEW YORK, [USLGB] LONG BEACH"
-// → ["USNYC", "USLGB"]
-// 대괄호 밖의 텍스트는 비교하지 않습니다.
+// 파트너 POE 텍스트에서 대괄호 내부 코드만 추출
 function extractPartnerPoeCodes(text) {
   return [...new Set(
     Array.from(
@@ -69,15 +70,16 @@ function extractPartnerPoeCodes(text) {
   )];
 }
 
-// 100개를 초과하는 경우 다음 페이지까지 모두 조회
-async function queryAllPartners() {
+// DB의 모든 페이지 조회
+async function queryDatabase(databaseId, body = {}) {
   const pages = [];
   let cursor = null;
 
   do {
     const response = await axios.post(
-      `https://api.notion.com/v1/databases/${PARTNER_DB_ID}/query`,
+      `https://api.notion.com/v1/databases/${databaseId}/query`,
       {
+        ...body,
         page_size: 100,
         ...(cursor ? { start_cursor: cursor } : {})
       },
@@ -95,12 +97,139 @@ async function queryAllPartners() {
 
     if (response.data.has_more && !cursor) {
       throw new Error(
-        "파트너 DB의 다음 페이지 정보를 받지 못했습니다."
+        "DB의 다음 페이지 정보를 받지 못했습니다."
       );
     }
   } while (cursor);
 
   return pages;
+}
+
+// 페이지 ID의 하이픈 표기 차이 제거
+function normalizePageId(id) {
+  return String(id || "")
+    .replace(/-/g, "")
+    .toLowerCase();
+}
+
+// 제목의 공백 차이를 허용
+function isBlTypeRow(properties) {
+  const title = (properties[PROP_INFO_TITLE]?.title || [])
+    .map(item =>
+      item.plain_text ?? item.text?.content ?? ""
+    )
+    .join("");
+
+  return (
+    title.replace(/\s+/g, "").toUpperCase() === "3.BLTYPE"
+  );
+}
+
+// 관계형 속성에 연결된 파트너 ID 조회
+async function getLinkedPartnerIds(page) {
+  const prop = page.properties?.[PROP_PARTNER_RELATION];
+
+  if (!prop?.relation) return [];
+
+  if (!prop.has_more) {
+    return prop.relation.map(item => item.id);
+  }
+
+  // 관계형 값이 잘린 경우 다음 페이지까지 조회
+  const ids = [];
+  let cursor = null;
+
+  do {
+    const response = await axios.get(
+      `https://api.notion.com/v1/pages/${page.id}/properties/${encodeURIComponent(prop.id)}`,
+      {
+        headers: notionHeaders(),
+        timeout: 30000,
+        params: {
+          page_size: 100,
+          ...(cursor ? { start_cursor: cursor } : {})
+        }
+      }
+    );
+
+    for (const item of response.data.results || []) {
+      if (item.relation?.id) {
+        ids.push(item.relation.id);
+      }
+    }
+
+    cursor = response.data.has_more
+      ? response.data.next_cursor
+      : null;
+
+    if (response.data.has_more && !cursor) {
+      throw new Error(
+        "관계형 속성의 다음 페이지 정보를 받지 못했습니다."
+      );
+    }
+  } while (cursor);
+
+  return ids;
+}
+
+// 각 파트너에 중복 없는 BL TYPE 목록 추가
+async function addBlTypes(partners) {
+  partners.forEach(partner => {
+    partner.blTypes = [];
+  });
+
+  if (!partners.length) return;
+
+  const partnerMap = new Map(
+    partners.map(partner => [
+      normalizePageId(partner.id),
+      partner
+    ])
+  );
+
+  const seenByPartner = new Map(
+    partners.map(partner => [
+      normalizePageId(partner.id),
+      new Set()
+    ])
+  );
+
+  const rows = await queryDatabase(PARTNER_INFO_DB_ID);
+
+  for (const row of rows) {
+    const properties = row.properties || {};
+
+    if (!isBlTypeRow(properties)) continue;
+
+    const linkedIds = await getLinkedPartnerIds(row);
+
+    const matchedIds = [
+      ...new Set(linkedIds.map(normalizePageId))
+    ].filter(id => partnerMap.has(id));
+
+    if (!matchedIds.length) continue;
+
+  // 열 제목에 MBL이 포함된 텍스트 속성만 가져옵니다.
+  const values = Object.entries(properties)
+    .filter(([columnName, prop]) =>
+      columnName.toUpperCase().includes("MBL") &&
+      prop?.type === "rich_text"
+    )
+    .map(([, prop]) => getRichText(prop))
+    .filter(value => value.trim() !== "");
+
+    for (const id of matchedIds) {
+      const partner = partnerMap.get(id);
+      const seen = seenByPartner.get(id);
+
+      for (const value of values) {
+        if (seen.has(value)) continue;
+
+        seen.add(value);
+        partner.blTypes.push(value);
+      }
+    }
+  }
 }
 
 module.exports = function registerBookingPartnerRoutes(app) {
@@ -125,7 +254,7 @@ module.exports = function registerBookingPartnerRoutes(app) {
     }
 
     try {
-      const pages = await queryAllPartners();
+      const pages = await queryDatabase(PARTNER_DB_ID);
       const selectedCodes = new Set(codes);
       const partners = [];
       const includedIds = new Set();
@@ -153,6 +282,8 @@ module.exports = function registerBookingPartnerRoutes(app) {
           matchedCodes
         });
       }
+
+      await addBlTypes(partners);
 
       partners.sort((a, b) =>
         a.name.localeCompare(b.name, "ko")
