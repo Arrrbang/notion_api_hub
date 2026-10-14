@@ -108,6 +108,46 @@ async function getPortMapCached() {
   return portMap;
 }
 
+async function getAllForwarderIds(page) {
+  const prop = page.properties?.[PROP_RELATION];
+
+  if (!prop?.has_more) {
+    return getRelationIds(prop);
+  }
+
+  const ids = [];
+  let cursor;
+
+  do {
+    const response = await axios.get(
+      `https://api.notion.com/v1/pages/${page.id}/properties/${encodeURIComponent(prop.id)}`,
+      {
+        headers: notionHeaders(),
+        params: {
+          page_size: 100,
+          ...(cursor ? { start_cursor: cursor } : {})
+        }
+      }
+    );
+
+    for (const item of response.data.results || []) {
+      if (item.relation?.id) {
+        ids.push(item.relation.id);
+      }
+    }
+
+    cursor = response.data.has_more
+      ? response.data.next_cursor
+      : null;
+
+    if (response.data.has_more && !cursor) {
+      throw new Error("관계형 다음 페이지 조회 실패");
+    }
+  } while (cursor);
+
+  return [...new Set(ids)];
+}
+
 module.exports = function registerMailBookingRoutes(app) {
   
   // 1번 드롭다운: POE 옵션 조회
@@ -246,38 +286,78 @@ module.exports = function registerMailBookingRoutes(app) {
     }
   });
   
-  // 운임표 데이터
   app.get("/api/mail/booking/rates", async (req, res) => {
     try {
       const poe = String(req.query.poe || "").trim();
+  
       if (!poe) {
-        return res.status(400).json({ ok: false, error: "poe 값이 필요합니다." });
+        return res.status(400).json({
+          ok: false,
+          error: "poe 값이 필요합니다."
+        });
       }
-
+  
       const ratePages = await queryDatabase(OCEAN_RATE_DB_ID, {
-        filter: { property: "POE", multi_select: { contains: poe } },
+        filter: {
+          property: "POE",
+          multi_select: { contains: poe }
+        }
       });
-
+  
+      const idsByRate = new Map();
+      const contactMap = new Map();
+  
+      for (const page of ratePages) {
+        const ids = await getAllForwarderIds(page);
+        idsByRate.set(page.id, ids);
+  
+        for (const id of ids) {
+          if (contactMap.has(id)) continue;
+  
+          const linkedPage = await retrievePage(id);
+          const props = linkedPage.properties || {};
+  
+          const titleProp = Object.values(props).find(
+            prop => prop.type === "title"
+          );
+  
+          contactMap.set(id, {
+            id,
+            name: getTitle(titleProp) || "이름 없음"
+          });
+        }
+      }
+  
       const rates = ratePages.map(page => {
         const props = page.properties || {};
-        const validityStart = props["VALIDITY"]?.date?.start || "";
-        const validityEnd = props["VALIDITY"]?.date?.end || "";
-        const validityStr = validityEnd ? `${validityStart} ~ ${validityEnd}` : validityStart;
-
+        const start = props["VALIDITY"]?.date?.start || "";
+        const end = props["VALIDITY"]?.date?.end || "";
+        const forwarderIds = idsByRate.get(page.id) || [];
+  
         return {
           id: page.id,
           forwarder: props["포워딩"]?.select?.name || "-",
+          forwarderIds,
+          linkedForwarders: forwarderIds.map(
+            id => contactMap.get(id)
+          ),
           carrier: props["선사"]?.select?.name || "-",
-          // 3️⃣ 수식 속성 이름 변경 반영
           dr20: props["20DR 최종"]?.formula?.number || 0,
           hc40: props["40HC 최종"]?.formula?.number || 0,
-          validity: validityStr || "-",
+          validity: (end ? `${start} ~ ${end}` : start) || "-"
         };
       });
-
-      return res.json({ ok: true, rates });
+  
+      return res.json({
+        ok: true,
+        rates
+      });
     } catch (e) {
-      return res.status(500).json({ ok: false, error: "운임 표 조회 실패", details: e.response?.data || e.message || String(e) });
+      return res.status(500).json({
+        ok: false,
+        error: "운임 표 조회 실패",
+        details: e.response?.data || e.message || String(e)
+      });
     }
   });
 };
