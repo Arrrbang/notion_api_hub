@@ -25,6 +25,7 @@ const registerMailBookingRoutes = require('./mail/booking');
 const registerMailGreenlightRoutes = require('./mail/greenlight');
 const registerSalesInfoRoutes = require('./info/sales_info');
 const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
+const registerBookingPartnerRoutes = require("./booking-partners");
 
 const app = express();
 
@@ -142,6 +143,8 @@ registerMailBookingRoutes(app);
 registerMailGreenlightRoutes(app);
 registerSalesInfoRoutes(app);
 registerQuotationSaveLoadRoutes(app);
+registerBookingPartnerRoutes(app);
+
 
 
 /* ─────────────────────────────────────────────────────────
