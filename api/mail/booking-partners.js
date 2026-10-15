@@ -394,10 +394,11 @@ function isCarrierDocument(page) {
   );
 }
 
-// 파트너 직접 연결 또는 국가 공지사항 연결 여부 확인
+// 파트너 직접 연결 또는 국가 공통 문서 여부 확인
 async function matchesPartnerOrCountry(page, partnerId) {
   const linkedPartnerIds = await getLinkedPartnerIds(page);
 
+  // 선택한 파트너가 직접 연결되어 있으면 허용
   const directlyLinked = linkedPartnerIds.some(
     id =>
       normalizePageId(id) === normalizePageId(partnerId)
@@ -405,6 +406,10 @@ async function matchesPartnerOrCountry(page, partnerId) {
 
   if (directlyLinked) return true;
 
+  // 다른 파트너가 연결된 문서는 국가가 같아도 제외
+  if (linkedPartnerIds.length > 0) return false;
+
+  // 파트너 연결이 비어 있는 문서만 국가 기준으로 확인
   const countryDocumentIds =
     await getCountryDocumentIds(partnerId);
 
@@ -790,6 +795,12 @@ function registerPartnerDocumentRoutes(app) {
 
           // 지정된 문서 DB의 선사 관련 문서만 수집
           if (!isCarrierDocument(page)) continue;
+
+          // 국가로 추가하는 문서는 파트너 연결이 비어 있어야 함
+          const linkedPartnerIds =
+            await getLinkedPartnerIds(page);
+
+          if (linkedPartnerIds.length > 0) continue;
 
           pagesById.set(normalizedId, page);
         }
