@@ -630,14 +630,28 @@ function registerPartnerDocumentRoutes(app) {
         documents
       });
     } catch (error) {
+      const details = error.response?.data;
+      const message =
+        details?.message ||
+        error.message ||
+        "알 수 없는 오류";
+
       console.error(
         "파트너 문서 목록 조회 실패:",
-        error.response?.status || error.message
+        JSON.stringify(
+          {
+            status: error.response?.status,
+            details,
+            message
+          },
+          null,
+          2
+        )
       );
 
       return res.status(500).json({
         ok: false,
-        error: "파트너 문서 목록 조회 실패"
+        error: `파트너 문서 목록 조회 실패: ${message}`
       });
     }
   });
