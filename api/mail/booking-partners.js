@@ -5,6 +5,8 @@ const PARTNER_INFO_DB_ID = "34a0b10191ce80c3b3aefd1fabbcbd55";
 const PARTNER_DOC_DB_ID = "34a0b10191ce800988a9dd777d4dc05c";
 
 const PROP_POE = "POE";
+const PROP_PARTNER_COUNTRY = "국가";
+const PROP_DOC_COUNTRY = "국가 매칭용 DB";
 const PROP_PARTNER_RELATION = "파트너 연결";
 const PROP_INFO_TITLE = "이름";
 const PROP_DOC_TYPE = "문서타입";
@@ -115,8 +117,9 @@ function isBlTypeRow(properties) {
   return title.replace(/\s+/g, "").toUpperCase() === "3.BLTYPE";
 }
 
-async function getLinkedPartnerIds(page) {
-  const prop = page.properties?.[PROP_PARTNER_RELATION];
+// 관계형 속성의 전체 페이지 ID 조회
+async function getRelationIds(page, propertyName) {
+  const prop = page.properties?.[propertyName];
 
   if (!prop?.relation) return [];
 
@@ -160,6 +163,71 @@ async function getLinkedPartnerIds(page) {
   return ids;
 }
 
+async function getLinkedPartnerIds(page) {
+  return getRelationIds(page, PROP_PARTNER_RELATION);
+}
+
+// 선택한 파트너의 "국가" 관계형 페이지 ID 조회
+async function getPartnerCountryIds(partnerId) {
+  const response = await axios.get(
+    `https://api.notion.com/v1/pages/${partnerId}`,
+    {
+      headers: notionHeaders(),
+      timeout: 30000
+    }
+  );
+
+  const page = response.data;
+
+  if (
+    normalizePageId(page.parent?.database_id) !==
+      normalizePageId(PARTNER_DB_ID) ||
+    page.archived ||
+    page.in_trash
+  ) {
+    const error = new Error("해당 파트너를 찾을 수 없습니다.");
+    error.response = { status: 404 };
+    throw error;
+  }
+
+  return [
+    ...new Set(
+      await getRelationIds(page, PROP_PARTNER_COUNTRY)
+    )
+  ];
+}
+
+// 문서가 선택한 파트너 또는 같은 국가에 연결되어 있는지 확인
+async function matchesPartnerOrCountry(page, partnerId) {
+  const linkedIds = await getLinkedPartnerIds(page);
+
+  if (
+    linkedIds.some(
+      id =>
+        normalizePageId(id) === normalizePageId(partnerId)
+    )
+  ) {
+    return true;
+  }
+
+  const countryIds = new Set(
+    (await getPartnerCountryIds(partnerId))
+      .map(normalizePageId)
+  );
+
+  if (!countryIds.size) return false;
+
+  const documentCountryIds = await getRelationIds(
+    page,
+    PROP_DOC_COUNTRY
+  );
+
+  return documentCountryIds.some(
+    id => countryIds.has(normalizePageId(id))
+  );
+}
+
+// BL TYPE 조회는 기존 방식 유지
 async function addBlTypes(partners) {
   partners.forEach(partner => {
     partner.blTypes = [];
@@ -497,28 +565,63 @@ function registerPartnerDocumentRoutes(app) {
     }
 
     try {
-      const pages = await queryDatabase(PARTNER_DOC_DB_ID, {
-        filter: {
-          and: [
+      const countryIds = await getPartnerCountryIds(partnerId);
+
+      // 파트너 직접 연결 또는 국가 일치
+      const matchFilters = [
+        {
+          property: PROP_PARTNER_RELATION,
+          relation: { contains: partnerId }
+        },
+        ...countryIds.map(id => ({
+          property: PROP_DOC_COUNTRY,
+          relation: { contains: id }
+        }))
+      ];
+
+      // 조건이 많을 경우 분할 조회
+      const pagesById = new Map();
+
+      for (
+        let offset = 0;
+        offset < matchFilters.length;
+        offset += 100
+      ) {
+        const pages = await queryDatabase(PARTNER_DOC_DB_ID, {
+          filter: {
+            and: [
+              {
+                or: matchFilters.slice(offset, offset + 100)
+              },
+              {
+                property: PROP_DOC_TYPE,
+                select: { equals: DOC_TYPE_VALUE }
+              }
+            ]
+          },
+          sorts: [
             {
-              property: PROP_PARTNER_RELATION,
-              relation: { contains: partnerId }
-            },
-            {
-              property: PROP_DOC_TYPE,
-              select: { equals: DOC_TYPE_VALUE }
+              property: PROP_DOC_UPDATED,
+              direction: "descending"
             }
           ]
-        },
-        sorts: [
-          {
-            property: PROP_DOC_UPDATED,
-            direction: "descending"
-          }
-        ]
-      });
+        });
 
-      const documents = pages.map(documentSummary);
+        for (const page of pages) {
+          if (!page.archived && !page.in_trash) {
+            pagesById.set(normalizePageId(page.id), page);
+          }
+        }
+      }
+
+      // 파트너와 국가 양쪽에 해당해도 한 번만 표시
+      const documents = [...pagesById.values()]
+        .map(documentSummary);
+
+      documents.sort((a, b) =>
+        (b.updatedDate?.start || "")
+          .localeCompare(a.updatedDate?.start || "")
+      );
 
       return res.json({
         ok: true,
@@ -576,14 +679,11 @@ function registerPartnerDocumentRoutes(app) {
         });
       }
 
-      const linkedIds = await getLinkedPartnerIds(page);
-
-      if (!linkedIds.some(
-        id => normalizePageId(id) === normalizePageId(partnerId)
-      )) {
+      // 국가로 조회된 문서도 본문 열람 허용
+      if (!(await matchesPartnerOrCountry(page, partnerId))) {
         return res.status(404).json({
           ok: false,
-          error: "해당 파트너에 연결된 문서가 아닙니다."
+          error: "해당 파트너 또는 국가에 연결된 문서가 아닙니다."
         });
       }
 
