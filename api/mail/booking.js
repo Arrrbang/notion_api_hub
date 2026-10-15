@@ -371,46 +371,53 @@ module.exports = function registerMailBookingRoutes(app) {
   // 전체 목록에서 직접 선택한 경우에 공통 사용
   // ---------------------------------------------------
 
-  app.get(
-    "/api/mail/booking/forwarder-contact",
-    async (req, res) => {
-      try {
-        const id = String(req.query.id || "").trim();
+// 선택한 포워딩의 연락처와 담당자 이름
+app.get(
+  "/api/mail/booking/forwarder-contact",
+  async (req, res) => {
+    try {
+      const id = String(req.query.id || "").trim();
 
-        if (!id) {
-          return res.status(400).json({
-            ok: false,
-            error: "id 값이 필요합니다."
-          });
-        }
-
-        const page = await retrievePage(id);
-        const props = page.properties || {};
-
-        const titleProp = Object.values(props).find(
-          prop => prop.type === "title"
-        );
-
-        return res.json({
-          ok: true,
-          contact: {
-            id,
-            name: getTitle(titleProp),
-            contact: getRichText(
-              props[PROP_CONTACT]
-            )
-          }
-        });
-      } catch (e) {
-        return res.status(500).json({
+      if (!id) {
+        return res.status(400).json({
           ok: false,
-          error: "포워딩 연락처 조회 실패",
-          details:
-            e.response?.data || e.message || String(e)
+          error: "id 값이 필요합니다."
         });
       }
+
+      const page = await retrievePage(id);
+      const props = page.properties || {};
+
+      const titleProp = Object.values(props).find(
+        prop => prop.type === "title"
+      );
+
+      return res.json({
+        ok: true,
+        contact: {
+          id,
+          name: getTitle(titleProp),
+
+          // 포워딩 DB의 텍스트 속성
+          personName: getRichText(
+            props["담당자 이름"]
+          ).trim(),
+
+          contact: getRichText(
+            props[PROP_CONTACT]
+          )
+        }
+      });
+    } catch (e) {
+      return res.status(500).json({
+        ok: false,
+        error: "포워딩 연락처 조회 실패",
+        details:
+          e.response?.data || e.message || String(e)
+      });
     }
-  );
+  }
+);
 
   // ---------------------------------------------------
   // 5. POL 목록
