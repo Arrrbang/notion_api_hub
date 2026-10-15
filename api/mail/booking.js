@@ -16,8 +16,8 @@ const PROP_CONTACT = "연락처";
 let poeOptionsCache = null;
 let poeOptionsCacheTime = 0;
 
-const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 60 * 24 * 7;
-
+// const POE_OPTIONS_CACHE_TTL = 1000 * 60 * 60 * 24 * 7; 원본 캐시 일정
+const POE_OPTIONS_CACHE_TTL = 0; //테스트용 캐시 일정 
 function notionHeaders() {
   if (!NOTION_TOKEN) {
     throw new Error(
