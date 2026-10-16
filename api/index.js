@@ -26,6 +26,7 @@ const registerMailGreenlightRoutes = require('./mail/greenlight');
 const registerSalesInfoRoutes = require('./info/sales_info');
 const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
 const registerBookingPartnerRoutes = require("./mail/booking-partners");
+const registerPartnerRegionsRoutes = require("./account/getPartnerRegions");
 
 const app = express();
 
@@ -144,6 +145,7 @@ registerMailGreenlightRoutes(app);
 registerSalesInfoRoutes(app);
 registerQuotationSaveLoadRoutes(app);
 registerBookingPartnerRoutes(app);
+registerPartnerRegionsRoutes(app);
 
 
 
