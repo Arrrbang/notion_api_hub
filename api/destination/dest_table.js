@@ -2,7 +2,7 @@
  * DEST_RATE 결과표 전용 백엔드 — dest_table.js
  * 대표 DB에서 국가의 타리프 DB를 찾고 도착항구 PORT CODE와 원래 POE를 연결합니다.
  * 선택 조건 모두가 일치하는 행 + 지역 다중선택이 비어 있는 모든 행을 반환합니다.
- * 지역이 빈 행은 업체/화물타입/POE/컨테이너 조건과 무관하게 포함합니다.
+ * 지역이 빈 행은 지역 조건만 면제하며 나머지 선택 조건은 반드시 일치해야 합니다.
  * 기존 costs.js의 직접금액/CBM/최소요금/LOOP/지역·타입·구간 수식 계산을 사용합니다.
  * 참고사항 서식, CDS/ADD/TAX/OTC 구분, 순서, 통화를 반환합니다.
  * 실제 환율 변환 및 추가항목 선택 합계는 프론트 공통 CurrencyConverter/BottomBar가 담당합니다.
@@ -363,6 +363,18 @@ function applyTypeFormula(code, type) {
 
 const MASTER_ID = '4000b10191ce801c8ed9e2df011bf664';
 const PORT_ID = '36e0b10191ce804492fce82a1d2719c3';
+// 타입 속성은 선택/다중선택/텍스트/상태 형식에서 CDS·ADD·OTC·TAX를 읽습니다.
+function getRowType(prop) {
+  const candidates = prop?.select ? [prop.select.name]
+    : prop?.multi_select ? prop.multi_select.map(v => v.name)
+    : prop?.status ? [prop.status.name]
+    : [getTextFromRich(prop?.rich_text || prop?.title || [])];
+  const types = candidates.map(v => String(v || '').trim().toUpperCase()).filter(Boolean);
+  const known = [...new Set(types.filter(v => ['CDS','ADD','OTC','TAX'].includes(v)))];
+  if (known.length > 1) throw new Error('한 비용 행에 타입이 여러 개 지정되어 있습니다.');
+  if (!known.length && types.length) throw new Error('지원하지 않는 비용 타입: ' + types.join(', '));
+  return known[0] || 'CDS';
+}
 function normalizeId(v) {
   const s = String(v || '').trim();
   return /^[0-9a-f]{32}$/i.test(s) || /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(s) ? s.replace(/-/g,'').toLowerCase() : null;
@@ -400,8 +412,7 @@ module.exports = function registerDestTableRoutes(app) {
       const pages=await queryAll(tariffId);
       const matched=pages.filter(page=>{
         const p=page.properties || {}, regions=getMultiSelectNames(p[REGION_PROP]);
-        if(!regions.length) return true; // 명시된 규칙: 공통행은 다른 조건과 무관하게 포함
-        return regions.includes(region) && getSelectName(p[COMPANY_PROP])===company
+        return (!regions.length || regions.includes(region)) && getSelectName(p[COMPANY_PROP])===company
           && getMultiSelectNames(p[CARGO_PROP]).includes(cargo)
           && getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value))
           && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).includes(type);
@@ -409,7 +420,7 @@ module.exports = function registerDestTableRoutes(app) {
       const rows=matched.map(page=>{
         const p=page.properties || {};
         return {id:page.id,item:getTitle(p,ITEM_PROP)||getTitle(p,'Name'),
-          rowType:getSelectName(p[ROW_TYPE_PROP]),order:getNumberFromProp(p[ORDER_PROP])??9999,
+          rowType:getRowType(p[ROW_TYPE_PROP]),order:getNumberFromProp(p[ORDER_PROP])??9999,
           [type]:computeAmount(p,type,cbm,region)??null,extra:getRichTextHtml(p,EXTRA_PROP),
           currency:getTitle(p,CURRENCY_PROP).trim().toUpperCase(),isCommon:!getMultiSelectNames(p[REGION_PROP]).length};
       }).sort((a,b)=>a.order-b.order);
