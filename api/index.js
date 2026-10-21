@@ -29,6 +29,8 @@ const registerBookingPartnerRoutes = require("./mail/booking-partners");
 const registerPartnerRegionsRoutes = require("./account/getPartnerRegions");
 const registerRateSearchRoutes = require("./rate/ratesearch");
 
+const registerDestRateRoutes = require("./destination/dest_rate");
+
 const app = express();
 
 /* ─────────────────────────────────────────────────────────
@@ -148,6 +150,8 @@ registerQuotationSaveLoadRoutes(app);
 registerBookingPartnerRoutes(app);
 registerPartnerRegionsRoutes(app);
 registerRateSearchRoutes(app);
+
+registerDestRateRoutes(app);
 
 
 
