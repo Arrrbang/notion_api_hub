@@ -4,10 +4,11 @@
  * - 국가별 위경도 DB에서 지역명/LAT/LNG를 반환합니다.
  * - 지역 → 업체 → 화물타입 → POE → 컨테이너타입 순으로 타리프 목록을 조회합니다.
  * - 이전 단계 선택값 모두가 일치하는 행만 사용하며 빈 속성을 공통값으로 포함하지 않습니다.
- * - 목록 중복 제거 및 전체 페이지네이션을 처리합니다. POE 문자열은 원형 유지합니다.
+ * - 목록 중복 제거 및 전체 페이지네이션을 처리합니다. POE는 PORT CODE 부분 일치로 항구명에 매핑하며 원래 태그도 보관합니다.
  * - CBM 1~68은 프론트에서 생성합니다. 비용 계산/금액 조회는 아직 구현하지 않습니다.
  */
 const axios = require('axios');
+const PORT_DB_ID = '36e0b10191ce804492fce82a1d2719c3';
 const MASTER_DB_ID = '4000b10191ce801c8ed9e2df011bf664';
 const rich = p => (p?.rich_text || []).map(t => t.plain_text ?? t.text?.content ?? '').join('').trim();
 const title = p => (p?.title || []).map(t => t.plain_text ?? t.text?.content ?? '').join('').trim();
@@ -79,7 +80,7 @@ module.exports = function registerDestRateRoutes(app) {
         companies: { required: ['region'], property: '업체', kind: 'select' },
         'cargo-types': { required: ['region', 'company'], property: '화물타입', kind: 'multi_select' },
         poes: { required: ['region', 'company', 'cargo'], property: 'POE', kind: 'multi_select' },
-        'container-types': { required: ['region', 'company', 'cargo', 'poe'], property: '컨테이너 타입', kind: 'multi_select' }
+        'container-types': { required: ['region', 'company', 'cargo', 'portId'], property: '컨테이너 타입', kind: 'multi_select' }
       };
       const stage = stages[req.query.stage];
       if (!stage || !dbId(req.params.countryId)) return res.status(400).json({ ok: false, error: '조회 단계 또는 국가 ID가 올바르지 않습니다.' });
@@ -92,7 +93,13 @@ module.exports = function registerDestRateRoutes(app) {
       if (!country) return res.status(404).json({ ok: false, error: '대표 DB에 등록되지 않은 국가입니다.' });
       if (!country.tariffDbId) return res.status(422).json({ ok: false, error: '타리프 DB ID가 비어 있거나 올바르지 않습니다.' });
       const fields = { region: ['지역', 'multi_select'], company: ['업체', 'select'], cargo: ['화물타입', 'multi_select'], poe: ['POE', 'multi_select'] };
-      const filters = stage.required.map(key => {
+      let selectedPortCode = null;
+      if (req.query.stage === 'container-types') {
+        const port = (await queryAll(PORT_DB_ID)).find(p => dbId(p.id) === dbId(values.portId));
+        if (!port) return res.status(400).json({ ok: false, error: '선택한 도착항구를 찾을 수 없습니다.' });
+        selectedPortCode = rich(port.properties?.['PORT CODE']);
+      }
+      const filters = stage.required.filter(key => key !== 'portId').map(key => {
         const [property, kind] = fields[key];
         return { property, [kind]: { [kind === 'select' ? 'equals' : 'contains']: values[key] } };
       });
@@ -102,6 +109,7 @@ module.exports = function registerDestRateRoutes(app) {
         const props = page.properties || {};
         // API 응답에서도 정확한 태그/업체 일치를 확인합니다.
         if (!stage.required.every(key => {
+          if (key === 'portId') return (props.POE?.multi_select || []).some(item => item.name && selectedPortCode.includes(item.name));
           const [property, kind] = fields[key];
           return kind === 'select' ? props[property]?.select?.name === values[key]
             : (props[property]?.multi_select || []).some(item => item.name === values[key]);
@@ -113,7 +121,20 @@ module.exports = function registerDestRateRoutes(app) {
           for (const item of props[stage.property]?.multi_select || []) if (item.name) names.add(item.name);
         }
       }
-      const options = [...names].sort((a,b) => a.localeCompare(b,'ko')).map(name => ({ id: name, name }));
+      let options;
+      if (req.query.stage === 'poes') {
+        // 문자열 그대로 부분 일치. (BUS), (INC), (VIA LA) 등은 제거하지 않습니다.
+        // USATL은 (BUS)USATL(VIA SAV)와 (BUS)USATL(VIA LA) 모두와 일치합니다.
+        options = (await queryAll(PORT_DB_ID)).map(page => {
+          const code = rich(page.properties?.['PORT CODE']);
+          const name = title(page.properties?.['PORT NAME']);
+          const matchedPoes = [...names].filter(poe => code.includes(poe));
+          return { id: page.id, name, portCode: code, matchedPoes };
+        }).filter(item => item.name && item.matchedPoes.length)
+          .sort((a,b) => a.name.localeCompare(b.name,'ko'));
+      } else {
+        options = [...names].sort((a,b) => a.localeCompare(b,'ko')).map(name => ({ id: name, name }));
+      }
       res.json({ ok: true, stage: req.query.stage, options });
     } catch(e) { fail(res,e,'타리프 선택 목록을 불러오지 못했습니다. DB 권한과 속성을 확인해 주세요.'); }
   });
