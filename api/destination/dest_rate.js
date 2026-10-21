@@ -79,7 +79,7 @@ module.exports = function registerDestRateRoutes(app) {
         companies: { required: ['region'], property: '업체', kind: 'select' },
         'cargo-types': { required: ['region', 'company'], property: '화물타입', kind: 'multi_select' },
         poes: { required: ['region', 'company', 'cargo'], property: 'POE', kind: 'multi_select' },
-        'container-types': { required: ['region', 'company', 'cargo', 'poe'], property: '컨테이너타입', kind: 'multi_select' }
+        'container-types': { required: ['region', 'company', 'cargo', 'poe'], property: '컨테이너 타입', kind: 'multi_select' }
       };
       const stage = stages[req.query.stage];
       if (!stage || !dbId(req.params.countryId)) return res.status(400).json({ ok: false, error: '조회 단계 또는 국가 ID가 올바르지 않습니다.' });
