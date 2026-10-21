@@ -27,6 +27,7 @@ const registerSalesInfoRoutes = require('./info/sales_info');
 const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
 const registerBookingPartnerRoutes = require("./mail/booking-partners");
 const registerPartnerRegionsRoutes = require("./account/getPartnerRegions");
+const registerRateSearchRoutes = require("./rate/ratesearch");
 
 const app = express();
 
@@ -146,6 +147,7 @@ registerSalesInfoRoutes(app);
 registerQuotationSaveLoadRoutes(app);
 registerBookingPartnerRoutes(app);
 registerPartnerRegionsRoutes(app);
+registerRateSearchRoutes(app);
 
 
 
