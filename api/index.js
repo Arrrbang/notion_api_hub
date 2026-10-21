@@ -30,6 +30,7 @@ const registerPartnerRegionsRoutes = require("./account/getPartnerRegions");
 const registerRateSearchRoutes = require("./rate/ratesearch");
 
 const registerDestRateRoutes = require("./destination/dest_rate");
+const registerDestTableRoutes = require("./destination/dest_table");
 
 const app = express();
 
@@ -152,7 +153,7 @@ registerPartnerRegionsRoutes(app);
 registerRateSearchRoutes(app);
 
 registerDestRateRoutes(app);
-
+registerDestTableRoutes(app);
 
 
 /* ─────────────────────────────────────────────────────────
