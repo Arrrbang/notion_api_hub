@@ -379,35 +379,32 @@ function normalizeId(v) {
   const s = String(v || '').trim();
   return /^[0-9a-f]{32}$/i.test(s) || /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(s) ? s.replace(/-/g,'').toLowerCase() : null;
 }
-async function queryAll(id) {
+async function queryAll(id, body = {}) {
   const pages=[];let cursor;
   do {
     const {data}=await axios.post(`https://api.notion.com/v1/databases/${id}/query`,{
-      page_size:100,...(cursor?{start_cursor:cursor}:{})
+      ...body,page_size:100,...(cursor?{start_cursor:cursor}:{})
     },{headers:notionHeaders(),timeout:20000});
     pages.push(...(data.results || []));cursor=data.has_more?data.next_cursor:null;
   } while(cursor);
   return pages;
 }
-module.exports = function registerDestTableRoutes(app) {
-  app.get('/api/dest-rate/table', async (req,res) => {
-    try {
-      res.set('Cache-Control','no-store');
+async function resolveTariffSelection(query) {
       const params={};
       for(const key of ['countryId','region','company','cargo','portId','type','cbm']) {
-        if(typeof req.query[key]!=='string'||!req.query[key].trim()) return res.status(400).json({ok:false,error:`${key} 선택값이 필요합니다.`});
-        params[key]=req.query[key].trim();
+        if(typeof query[key]!=='string'||!query[key].trim()) throw Object.assign(new Error(`${key} 선택값이 필요합니다.`),{status:400});
+        params[key]=query[key].trim();
       }
       const {countryId,region,company,cargo,portId,type}=params;
       const cbm=Number(params.cbm);
       if(!normalizeId(countryId)||!normalizeId(portId)||!Number.isInteger(cbm)||cbm<1||cbm>68)
-        return res.status(400).json({ok:false,error:'국가·항구 ID 또는 CBM(1~68)이 올바르지 않습니다.'});
+        throw Object.assign(new Error('국가·항구 ID 또는 CBM(1~68)이 올바르지 않습니다.'),{status:400});
       const master=(await queryAll(MASTER_ID)).find(p=>normalizeId(p.id)===normalizeId(countryId));
-      if(!master) return res.status(404).json({ok:false,error:'대표 DB에서 국가를 찾지 못했습니다.'});
+      if(!master) throw Object.assign(new Error('대표 DB에서 국가를 찾지 못했습니다.'),{status:404});
       const tariffId=normalizeId(getTitle(master.properties,'타리프 DB ID'));
-      if(!tariffId) return res.status(422).json({ok:false,error:'타리프 DB ID를 확인해 주세요.'});
+      if(!tariffId) throw Object.assign(new Error('타리프 DB ID를 확인해 주세요.'),{status:422});
       const port=(await queryAll(PORT_ID)).find(p=>normalizeId(p.id)===normalizeId(portId));
-      if(!port) return res.status(404).json({ok:false,error:'도착항구를 찾지 못했습니다.'});
+      if(!port) throw Object.assign(new Error('도착항구를 찾지 못했습니다.'),{status:404});
       const portCode=getTitle(port.properties,'PORT CODE');
       const pages=await queryAll(tariffId);
       const matched=pages.filter(page=>{
@@ -417,6 +414,16 @@ module.exports = function registerDestTableRoutes(app) {
           && (!regions.length || getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value)))
           && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).includes(type);
       });
+
+  return {params,master,port,portCode,matched};
+}
+module.exports = function registerDestTableRoutes(app) {
+  app.get('/api/dest-rate/table', async (req,res) => {
+    try {
+      res.set('Cache-Control','no-store');
+      const {params,master,port,portCode,matched}=await resolveTariffSelection(req.query);
+      const {region,company,cargo,type}=params;
+      const cbm=Number(params.cbm);
       const rows=matched.map(page=>{
         const p=page.properties || {};
         return {id:page.id,item:getTitle(p,ITEM_PROP)||getTitle(p,'Name'),
@@ -431,7 +438,11 @@ module.exports = function registerDestTableRoutes(app) {
         poe:getTitle(port.properties,'PORT NAME'),portCode,type,cbm,rows,currency});
     } catch(e) {
       console.error('[dest_table]',e.response?.status||e.code||e.message);
-      res.status(500).json({ok:false,error:'비용 조회에 실패했습니다. DB 권한과 속성 및 계산식을 확인해 주세요.'});
+      res.status(e.status || 500).json({ok:false,error:e.status ? e.message : '비용 조회에 실패했습니다. DB 권한과 속성 및 계산식을 확인해 주세요.'});
     }
   });
 };
+
+// 비용 문서 API도 같은 비용행 선택 규칙을 재사용합니다.
+module.exports.resolveTariffSelection=resolveTariffSelection;
+module.exports.notionHelpers={queryAll,notionHeaders,normalizeId,getTitle};
