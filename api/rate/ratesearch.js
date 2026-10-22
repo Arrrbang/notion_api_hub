@@ -21,13 +21,14 @@ function poeCodes(prop) {
   return [...new Set(values.flatMap(value => splitCodes(value || "")))];
 }
 
-async function queryAll(databaseId) {
+async function queryAll(databaseId, body = {}) {
   const token = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
   if (!token) throw new Error("Notion API token is missing");
   const pages = [];
   let cursor;
   do {
     const response = await axios.post(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+      ...body,
       page_size: 100,
       ...(cursor ? { start_cursor: cursor } : {})
     }, {
@@ -45,6 +46,35 @@ async function queryAll(databaseId) {
 }
 
 module.exports = function registerRateSearchRoutes(app) {
+  /** 운임 변동: 허용된 항구 ID를 PORT CODE로 변환하고, 두 DB의 동일 이름 숫자 속성을 읽습니다.
+   * 기간 제목 오름차순(A→Z), 전체 페이지네이션, null(미등록)과 0(실제값)을 구분합니다.
+   */
+  app.get('/api/rate-search/history', async (req,res) => {
+    try {
+      res.set('Cache-Control','no-store');
+      const normalize = value => String(value || '').replace(/-/g,'').toLowerCase();
+      if (typeof req.query.portIds !== 'string') return res.status(400).json({ok:false,error:'항구 ID가 필요합니다.'});
+      const ids = [...new Set(req.query.portIds.split(',').map(normalize))];
+      if (!ids.length || ids.length > 100 || ids.some(id=>!/^[0-9a-f]{32}$/.test(id))) return res.status(400).json({ok:false,error:'항구 ID가 올바르지 않습니다. 최대 100개까지 조회할 수 있습니다.'});
+      const ports = (await queryAll(PORT_CODE_DB_ID)).filter(page=>ids.includes(normalize(page.id)));
+      if (ports.length !== ids.length) return res.status(404).json({ok:false,error:'등록되지 않은 항구입니다.'});
+      const definitions = [{key:'dr20',name:'20DRY',id:'3790b10191ce8030932bfc233c74af8a'},{key:'hc40',name:'40HC',id:'3790b10191ce805ca871fc6cf2bc2dba'}];
+      const containers = await Promise.all(definitions.map(async definition => {
+        const rows = await queryAll(definition.id,{sorts:[{property:'기간',direction:'ascending'}]});
+        return {key:definition.key,name:definition.name,series:ports.flatMap(port=>splitCodes(text(port.properties?.['PORT CODE'])).map(code=>({
+          portId:port.id,name:title(port.properties?.['PORT NAME']),code,
+          points:rows.map(row=>{
+            const value=row.properties?.[code]?.number;
+            return {id:row.id,period:title(row.properties?.['기간']),value:typeof value==='number' && Number.isFinite(value)?value:null};
+          })
+        })))};
+      }));
+      res.json({ok:true,containers});
+    } catch(error) {
+      console.error('[rate-search/history]',error.response?.status || error.message);
+      res.status(500).json({ok:false,error:'운임 변동을 불러오지 못했습니다. 두 DB의 접근 권한과 기간·PORT CODE 숫자 속성을 확인해 주세요.'});
+    }
+  });
   // 대표 DB에 등록된 타리프 DB만 조회합니다. 클라이언트가 DB ID를 직접 지정하지 않습니다.
   app.get('/api/rate-search/countries/:countryId/tariff-regions', async (req, res) => {
     const normalize = value => String(value || '').replace(/-/g, '').toLowerCase();
