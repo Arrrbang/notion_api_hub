@@ -33,6 +33,8 @@ const registerRateSearchRoutes = require("./rate/ratesearch");
 const registerDestRateRoutes = require("./destination/dest_rate");
 const registerDestTableRoutes = require("./destination/dest_table");
 const registerDestDocumentsRoutes = require("./destination/dest_documents");
+const registerRateRequestRoutes = require('./rate/request');
+
 
 const app = express();
 
@@ -158,6 +160,7 @@ registerRateSearchRoutes(app);
 registerDestRateRoutes(app);
 registerDestTableRoutes(app);
 registerDestDocumentsRoutes(app);
+registerRateRequestRoutes(app);
 
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
