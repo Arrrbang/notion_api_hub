@@ -1,8 +1,8 @@
 /**
  * DEST_RATE 결과표 전용 백엔드 — dest_table.js
  * 대표 DB에서 국가의 타리프 DB를 찾고 도착항구 PORT CODE와 원래 POE를 연결합니다.
- * 선택 조건 모두가 일치하는 행 + 지역 다중선택이 비어 있는 모든 행을 반환합니다.
- * 지역이 빈 행은 지역 조건만 면제하며 나머지 선택 조건은 반드시 일치해야 합니다.
+ * 지역이 있는 행은 모든 선택 조건을 확인하고, 지역이 빈 행은 공통행으로 처리합니다.
+ * 지역이 빈 행은 지역·POE를 면제하며 업체·화물타입·컨테이너 타입은 일치해야 합니다.
  * 기존 costs.js의 직접금액/CBM/최소요금/LOOP/지역·타입·구간 수식 계산을 사용합니다.
  * 참고사항 서식, CDS/ADD/TAX/OTC 구분, 순서, 통화를 반환합니다.
  * 실제 환율 변환 및 추가항목 선택 합계는 프론트 공통 CurrencyConverter/BottomBar가 담당합니다.
@@ -414,7 +414,7 @@ module.exports = function registerDestTableRoutes(app) {
         const p=page.properties || {}, regions=getMultiSelectNames(p[REGION_PROP]);
         return (!regions.length || regions.includes(region)) && getSelectName(p[COMPANY_PROP])===company
           && getMultiSelectNames(p[CARGO_PROP]).includes(cargo)
-          && getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value))
+          && (!regions.length || getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value)))
           && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).includes(type);
       });
       const rows=matched.map(page=>{
