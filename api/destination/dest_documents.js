@@ -3,9 +3,10 @@
  * dest_table.js와 같은 필터로 실제 반환 비용행을 찾고 '파트너 연결'을 중복 제거합니다.
  * 문서 DB에서 파트너 관계가 일치하고 문서타입='비 용 관 련'인 페이지만 반환합니다.
  * 관계형/문서/본문 블록의 페이지네이션 처리, 문서 중복 제거, 본문 하위 블록 조회.
- * 댓글 본문 앞에 웹 로그인 아이디를 붙이고, Notion 연결 계정으로 페이지 댓글에 등록합니다.
+ * PASS_ID로 조회한 한글명을 댓글 본문 앞에 붙이고, Notion 연결 계정으로 페이지 댓글에 등록합니다.
  */
 const axios=require('axios');
+const {lookupOperInfo}=require('../info/oper_info');
 const {resolveTariffSelection,notionHelpers}=require('./dest_table');
 const {queryAll,notionHeaders,normalizeId,getTitle}=notionHelpers;
 const DOCUMENT_DB='34a0b10191ce800988a9dd777d4dc05c';
@@ -101,8 +102,9 @@ module.exports=function registerDestDocumentsRoutes(app) {
       if(!text || text.length>10000)return res.status(400).json({ok:false,error:'댓글을 1~10,000자로 입력해 주세요.'});
       const username=typeof req.body?.username==='string'?req.body.username.trim():'';
       if(!username || username.length>100 || /[\r\n]/.test(username))return res.status(400).json({ok:false,error:'로그인 아이디를 확인해 주세요. 다시 로그인 후 등록해 주세요.'});
+      const author=await lookupOperInfo(username);
       const page=await allowedDocument(req.body?.selection || {},req.params.pageId);
-      const commentText=`[${username}]\n${text}`;
+      const commentText=`[${author.korean_name}]\n${text}`;
       const rich_text=[];let chunk='';
       for(const char of commentText) {
         if(chunk.length+char.length>2000){rich_text.push({type:'text',text:{content:chunk}});chunk='';}
@@ -110,7 +112,7 @@ module.exports=function registerDestDocumentsRoutes(app) {
       }
       if(chunk)rich_text.push({type:'text',text:{content:chunk}});
       const {data}=await axios.post(`${API}/comments`,{parent:{page_id:page.id},rich_text},{headers:notionHeaders(),timeout:20000});
-      res.json({ok:true,comment:{id:data.id,createdTime:data.created_time,createdBy:data.created_by}});
+      res.json({ok:true,author:{pass_id:author.pass_id,korean_name:author.korean_name},comment:{id:data.id,createdTime:data.created_time,createdBy:data.created_by}});
     }catch(e){fail(res,e);}
   });
 };
