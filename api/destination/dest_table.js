@@ -19,7 +19,7 @@ const REGION_PROP       = process.env.REGION_PROP       || '지역';
 const COMPANY_PROP      = process.env.COMPANY_PROP      || '업체';       
 const POE_PROP          = process.env.POE_PROP          || 'POE';        
 const CARGO_PROP        = process.env.CARGO_PROP        || '화물타입';   
-const ROW_TYPE_PROP     = process.env.ROW_TYPE_PROP     || '타입';       // ✨ 통합된 속성
+const ROW_TYPE_PROP = '분류'; // 선택 속성: CDS=기본, ADD=체크 선택, OTC=별도 안내
 const ITEM_PROP         = process.env.ITEM_PROP         || '항목';       
 const EXTRA_PROP        = process.env.EXTRA_PROP        || '참고사항';   
 const FORMULA_PROP      = process.env.FORMULA_PROP      || '계산식';     
@@ -363,7 +363,7 @@ function applyTypeFormula(code, type) {
 
 const MASTER_ID = '4000b10191ce801c8ed9e2df011bf664';
 const PORT_ID = '36e0b10191ce804492fce82a1d2719c3';
-// 타입 속성은 선택/다중선택/텍스트/상태 형식에서 CDS·ADD·OTC·TAX를 읽습니다.
+// 분류 속성에서 CDS·ADD·OTC·TAX를 읽습니다.
 function getRowType(prop) {
   const candidates = prop?.select ? [prop.select.name]
     : prop?.multi_select ? prop.multi_select.map(v => v.name)
@@ -372,7 +372,7 @@ function getRowType(prop) {
   const types = candidates.map(v => String(v || '').trim().toUpperCase()).filter(Boolean);
   const known = [...new Set(types.filter(v => ['CDS','ADD','OTC','TAX'].includes(v)))];
   if (known.length > 1) throw new Error('한 비용 행에 타입이 여러 개 지정되어 있습니다.');
-  if (!known.length && types.length) throw new Error('지원하지 않는 비용 타입: ' + types.join(', '));
+  if (!known.length && types.length) throw new Error('지원하지 않는 비용 분류: ' + types.join(', '));
   return known[0] || 'CDS';
 }
 function normalizeId(v) {
