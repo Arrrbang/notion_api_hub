@@ -21,6 +21,18 @@ function poeCodes(prop) {
   return [...new Set(values.flatMap(value => splitCodes(value || "")))];
 }
 
+// PORT CODE의 개별 코드와 쉼표로 묶인 그래프 속성명을 비교합니다.
+// 접두어/VIA는 유지하고 쉼표 앞뒤 공백만 제거합니다. 부분 일치는 사용하지 않습니다.
+function historyValue(properties, code) {
+  const target = String(code).trim();
+  const numeric = Object.entries(properties || {}).filter(([, prop]) => prop?.type === 'number' || Object.prototype.hasOwnProperty.call(prop || {}, 'number'));
+  const exact = numeric.filter(([name]) => name.trim() === target);
+  const matches = exact.length ? exact : numeric.filter(([name]) => splitCodes(name).includes(target));
+  if (matches.length > 1) throw new Error(`운임 변동 DB의 코드 속성이 중복되어 있습니다: ${target}`);
+  const value = matches[0]?.[1]?.number;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 async function queryAll(databaseId, body = {}) {
   const token = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
   if (!token) throw new Error("Notion API token is missing");
@@ -46,7 +58,7 @@ async function queryAll(databaseId, body = {}) {
 }
 
 module.exports = function registerRateSearchRoutes(app) {
-  /** 운임 변동: 허용된 항구 ID를 PORT CODE로 변환하고, 두 DB의 동일 이름 숫자 속성을 읽습니다.
+  /** 운임 변동: 허용된 항구 ID를 PORT CODE로 변환하고, 두 DB의 숫자 속성명을 쉼표로 분리해 같은 코드가 포함된 속성을 읽습니다.
    * 기간 제목 오름차순(A→Z), 전체 페이지네이션, null(미등록)과 0(실제값)을 구분합니다.
    */
   app.get('/api/rate-search/history', async (req,res) => {
@@ -64,7 +76,7 @@ module.exports = function registerRateSearchRoutes(app) {
         return {key:definition.key,name:definition.name,series:ports.flatMap(port=>splitCodes(text(port.properties?.['PORT CODE'])).map(code=>({
           portId:port.id,name:title(port.properties?.['PORT NAME']),code,
           points:rows.map(row=>{
-            const value=row.properties?.[code]?.number;
+            const value=historyValue(row.properties, code);
             return {id:row.id,period:title(row.properties?.['기간']),value:typeof value==='number' && Number.isFinite(value)?value:null};
           })
         })))};
