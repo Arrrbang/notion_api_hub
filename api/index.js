@@ -35,6 +35,8 @@ const registerDestTableRoutes = require("./destination/dest_table");
 const registerDestDocumentsRoutes = require("./destination/dest_documents");
 const registerRateRequestRoutes = require('./rate/request');
 
+const registerUserInfoRoutes = require('./info/user_info');
+
 
 const app = express();
 
@@ -162,6 +164,7 @@ registerDestTableRoutes(app);
 registerDestDocumentsRoutes(app);
 registerRateRequestRoutes(app);
 
+registerUserInfoRoutes(app);
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
 ────────────────────────────────────────────────────────── */
