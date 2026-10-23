@@ -1,10 +1,10 @@
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
+const users = require("../info/user_service");
 
 // Notion 설정
 const NOTION_DATABASE_ID = "2760b10191ce80799f5fe13cd365ddad"; // 업무 대시보드 DB
-const SALES_INFO_DB_ID = "3a50b10191ce80c8b560f043f9565688"; // 💡 [추가] 영업/직원 정보 DB
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
 
 function notionHeaders() {
@@ -56,35 +56,9 @@ router.get("/", async (req, res) => {
     const { username } = req.query;
     const headers = notionHeaders();
 
-    // ─────────────────────────────────────────────────────────────
-    // 💡 [NEW] Query 0: 노션 영업/직원 DB에서 username(PASS_ID)로 한글명 찾기
-    // ─────────────────────────────────────────────────────────────
-    const userQuery = await axios.post(
-      `https://api.notion.com/v1/databases/${SALES_INFO_DB_ID}/query`,
-      {
-        filter: {
-          property: "PASS_ID",
-          title: { equals: username }
-        }
-      },
-      { headers }
-    );
+    const employee = await users.getUser(username);
+    const salesRepName = employee.korean_name;
 
-    const userPages = userQuery.data.results;
-    if (!userPages || userPages.length === 0) {
-      return res.status(400).json({ ok: false, error: "직원 정보 DB에 매칭되는 아이디가 없습니다." });
-    }
-
-    // "한글명" rich_text 속성에서 이름 텍스트 추출
-    const koreanNameProp = userPages[0].properties["한글명"]?.rich_text;
-    const salesRepName = koreanNameProp?.map(t => t.plain_text).join("") || "";
-
-    if (!salesRepName) {
-      return res.status(400).json({ ok: false, error: "해당 계정의 한글 이름이 노션에 등록되어 있지 않습니다." });
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    
     const today = new Date();
     const nextPassportLimitDate = new Date();
     nextPassportLimitDate.setDate(today.getDate() + 14);
@@ -186,9 +160,9 @@ router.get("/", async (req, res) => {
 
   } catch (error) {
     console.error("Notion API Error:", error.response?.data || error.message);
-    res.status(500).json({ 
+    res.status(error.status || 500).json({ 
       ok: false, 
-      error: "서버 내부 오류가 발생했습니다.", 
+      error: error.status ? error.message : "서버 내부 오류가 발생했습니다.", 
       details: error.response?.data || error.message 
     });
   }
