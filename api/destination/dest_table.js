@@ -1,5 +1,6 @@
 /**
  * DEST_RATE 결과표 전용 백엔드 — dest_table.js
+ * 업체는 다중선택 속성으로 읽고, 선택한 업체가 포함된 행만 반환합니다.
  * 대표 DB에서 국가의 타리프 DB를 찾고 도착항구 PORT CODE와 원래 POE를 연결합니다.
  * 지역이 있는 행은 모든 선택 조건을 확인하고, 지역이 빈 행은 공통행으로 처리합니다.
  * 지역이 빈 행은 지역·POE를 면제하며 업체·화물타입·컨테이너 타입은 일치해야 합니다.
@@ -409,7 +410,7 @@ async function resolveTariffSelection(query) {
       const pages=await queryAll(tariffId);
       const matched=pages.filter(page=>{
         const p=page.properties || {}, regions=getMultiSelectNames(p[REGION_PROP]);
-        return (!regions.length || regions.includes(region)) && getSelectName(p[COMPANY_PROP])===company
+        return (!regions.length || regions.includes(region)) && getMultiSelectNames(p[COMPANY_PROP]).includes(company)
           && getMultiSelectNames(p[CARGO_PROP]).includes(cargo)
           && (!regions.length || getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value)))
           && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).includes(type);
