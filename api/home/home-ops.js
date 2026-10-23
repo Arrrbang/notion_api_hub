@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const router = express.Router();
+const users = require("../info/user_service");
 
 const NOTION_DATABASE_ID = "2760b10191ce80799f5fe13cd365ddad";
 const NOTION_TOKEN = process.env.NOTION_API_KEY || process.env.NOTION_TOKEN;
@@ -12,13 +13,6 @@ function notionHeaders() {
     "Notion-Version": "2022-06-28"
   };
 }
-
-const OPS_USER_MAPPING = {
-  "admin": "지아름",
-  "opere": "지아름",
-  "opero": "노해원",
-  "operd": "소다미"
-};
 
 const HOLIDAYS = [
     "2024-01-01", "2024-02-09", "2024-02-10", "2024-02-11", "2024-02-12",
@@ -115,11 +109,9 @@ function formatOpsPage(page, nextBusinessDayStr) {
 router.get("/", async (req, res) => {
   try {
     const { username } = req.query;
-    const opsName = OPS_USER_MAPPING[username];
-
-    if (!opsName) {
-      return res.status(400).json({ ok: false, error: "매칭되는 업무담당자가 없습니다." });
-    }
+    const employee = await users.getUser(username);
+    const opsName = employee.korean_name;
+    const notionUserId = users.requireNotionUser(employee);
 
     const today = new Date();
     // Vercel 서버 시간 보정을 위해 한국 시간(KST)으로 변환 권장 (간단히 +9시간 처리)
@@ -144,6 +136,7 @@ router.get("/", async (req, res) => {
       { // ✅ 쿼리 본문 시작
         filter: {
           and: [
+            { property: "업무담당", people: { contains: notionUserId } },
             { property: "여권수취여부", select: { does_not_equal: "수취" } },
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: nextWeekStr } }
@@ -164,6 +157,7 @@ router.get("/", async (req, res) => {
       { // ✅ 쿼리 본문 시작
         filter: {
           and: [
+            { property: "업무담당", people: { contains: notionUserId } },
             { property: "서류마감", date: { on_or_after: todayStr } },
             { property: "서류마감", date: { on_or_before: targetDateStr } }
           ]
@@ -183,11 +177,11 @@ router.get("/", async (req, res) => {
     // 데이터 정제 (filterOpsPage에 nextBizDayStr 전달)
     const passportNeeded = passportRes.data.results
         .map(page => formatOpsPage(page, nextBizDayStr))
-        .filter(item => item.assignees.includes(opsName));
+        ;
 
     const upcomingDeadline = deadlineRes.data.results
         .map(page => formatOpsPage(page, nextBizDayStr))
-        .filter(item => item.assignees.includes(opsName));
+        ;
 
     res.json({ 
       ok: true, 
@@ -197,7 +191,7 @@ router.get("/", async (req, res) => {
 
   } catch (error) {
     console.error("Ops API Error:", error.response?.data || error.message);
-    res.status(500).json({ ok: false, error: "서버 오류 발생", details: error.message });
+    res.status(error.status || 500).json({ ok: false, error: error.status ? error.message : "서버 오류 발생" });
   }
 });
 
