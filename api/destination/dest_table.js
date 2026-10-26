@@ -1,4 +1,5 @@
 /**
+ * 20DR/20DRY/20FT는 20FT로 통일하며 숫자 속성 20FT를 사용합니다.
  * DEST_RATE 결과표 전용 백엔드 — dest_table.js
  * 업체는 다중선택 속성으로 읽고, 선택한 업체가 포함된 행만 반환합니다.
  * 대표 DB에서 국가의 타리프 DB를 찾고 도착항구 PORT CODE와 원래 POE를 연결합니다.
@@ -9,6 +10,12 @@
  * 실제 환율 변환 및 추가항목 선택 합계는 프론트 공통 CurrencyConverter/BottomBar가 담당합니다.
  */
 const axios = require('axios');
+// 20피트 컨테이너는 조회·응답·계산에서 20FT로 통일합니다.
+function normalizeContainerType(value) {
+  const type=String(value || '').trim();
+  return ['20FT','20DR','20DRY'].includes(type.toUpperCase()) ? '20FT' : type;
+}
+
 
 // ────────────────────────────────
 // 환경변수 & 노션 공통 설정
@@ -189,6 +196,7 @@ function calcConsoleAmount(props, cbm) {
 }
 
 function computeAmount(props, type, cbm, selectedRegion) {
+  type=normalizeContainerType(type);
   // 1. ✨ 가장 먼저 요청된 타입(20FT 또는 40HC) 자체의 속성값이 있는지 확인하고, 있으면 즉시 최우선 반환합니다.
   if (type === '20FT' || type === '40HC') {
     const directVal = getNumberFromProp(props[type]);
@@ -354,7 +362,7 @@ function applyTypeFormula(code, type) {
     const m = condition.match(/^TYPE\s*=\s*["']([^"']+)["']$/i);
     if (!m) return s;
 
-    return type.toUpperCase() === m[1].toUpperCase()
+    return normalizeContainerType(type).toUpperCase() === normalizeContainerType(m[1]).toUpperCase()
       ? thenP
       : parseIfType(elseP);
   }
@@ -396,6 +404,7 @@ async function resolveTariffSelection(query) {
         if(typeof query[key]!=='string'||!query[key].trim()) throw Object.assign(new Error(`${key} 선택값이 필요합니다.`),{status:400});
         params[key]=query[key].trim();
       }
+      params.type=normalizeContainerType(params.type);
       const {countryId,region,company,cargo,portId,type}=params;
       const cbm=Number(params.cbm);
       if(!normalizeId(countryId)||!normalizeId(portId)||!Number.isInteger(cbm)||cbm<1||cbm>68)
@@ -413,7 +422,7 @@ async function resolveTariffSelection(query) {
         return (!regions.length || regions.includes(region)) && getMultiSelectNames(p[COMPANY_PROP]).includes(company)
           && getMultiSelectNames(p[CARGO_PROP]).includes(cargo)
           && (!regions.length || getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value)))
-          && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).includes(type);
+          && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).some(value=>normalizeContainerType(value)===type);
       });
 
   return {params,master,port,portCode,matched};
