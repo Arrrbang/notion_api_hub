@@ -5,7 +5,7 @@
  * - 대표 DB의 나라명, 타리프 DB ID, 위경도 DB ID를 읽습니다.
  * - 국가별 위경도 DB에서 지역명/LAT/LNG를 반환합니다.
  * - 업체는 다중선택 속성입니다. 목록은 모든 업체를 중복 제거하고, 조회는 선택 업체 포함 여부로 판단합니다.
- * - 지역 → 업체 → 화물타입 → POE → 컨테이너타입 순으로 타리프 목록을 조회합니다.
+ * - 지역 → 업체 → 화물타입 → 컨테이너타입 → POE 순으로 타리프 목록을 조회합니다.
  * - 이전 단계 선택값 모두가 일치하는 행만 사용하며 빈 속성을 공통값으로 포함하지 않습니다.
  * - 목록 중복 제거 및 전체 페이지네이션을 처리합니다. POE는 PORT CODE 부분 일치로 항구명에 매핑하며 원래 태그도 보관합니다.
  * - CBM 1~68은 프론트에서 생성합니다. 비용 계산/금액 조회는 아직 구현하지 않습니다.
@@ -88,29 +88,24 @@ module.exports = function registerDestRateRoutes(app) {
       const stages = {
         companies: { required: ['region'], property: '업체', kind: 'multi_select' },
         'cargo-types': { required: ['region', 'company'], property: '화물타입', kind: 'multi_select' },
-        poes: { required: ['region', 'company', 'cargo'], property: 'POE', kind: 'multi_select' },
-        'container-types': { required: ['region', 'company', 'cargo', 'portId'], property: '컨테이너 타입', kind: 'multi_select' }
+        poes: { required: ['region', 'company', 'cargo', 'type'], property: 'POE', kind: 'multi_select' },
+        'container-types': { required: ['region', 'company', 'cargo'], property: '컨테이너 타입', kind: 'multi_select' }
       };
       const stage = stages[req.query.stage];
       if (!stage || !dbId(req.params.countryId)) return res.status(400).json({ ok: false, error: '조회 단계 또는 국가 ID가 올바르지 않습니다.' });
       const values = {};
       for (const key of stage.required) {
         if (typeof req.query[key] !== 'string' || !req.query[key].trim()) return res.status(400).json({ ok: false, error: `${key} 선택값이 필요합니다.` });
-        values[key] = req.query[key].trim();
+        values[key] = key==='type'?normalizeContainerType(req.query[key]):req.query[key].trim();
       }
       const country = (await countries()).find(c => dbId(c.id) === dbId(req.params.countryId));
       if (!country) return res.status(404).json({ ok: false, error: '대표 DB에 등록되지 않은 국가입니다.' });
       if (!country.tariffDbId) return res.status(422).json({ ok: false, error: '타리프 DB ID가 비어 있거나 올바르지 않습니다.' });
-      const fields = { region: ['지역', 'multi_select'], company: ['업체', 'multi_select'], cargo: ['화물타입', 'multi_select'], poe: ['POE', 'multi_select'] };
-      let selectedPortCode = null;
-      if (req.query.stage === 'container-types') {
-        const port = (await queryAll(PORT_DB_ID)).find(p => dbId(p.id) === dbId(values.portId));
-        if (!port) return res.status(400).json({ ok: false, error: '선택한 도착항구를 찾을 수 없습니다.' });
-        selectedPortCode = rich(port.properties?.['PORT CODE']);
-      }
-      const filters = stage.required.filter(key => key !== 'portId').map(key => {
-        const [property, kind] = fields[key];
-        return { property, [kind]: { [kind === 'select' ? 'equals' : 'contains']: values[key] } };
+      const fields = { region: ['지역', 'multi_select'], company: ['업체', 'multi_select'], cargo: ['화물타입', 'multi_select'], type: ['컨테이너 타입','multi_select'] };
+      // 컨테이너는 20FT 별칭을 정규화해 아래 응답 검사에서 비교합니다.
+      const filters=stage.required.filter(key=>key!=='type').map(key=>{
+        const [property,kind]=fields[key];
+        return {property,[kind]:{contains:values[key]}};
       });
       const pages = await queryAll(country.tariffDbId, { filter: { and: filters } });
       const names = new Set();
@@ -118,10 +113,8 @@ module.exports = function registerDestRateRoutes(app) {
         const props = page.properties || {};
         // API 응답에서도 정확한 태그/업체 일치를 확인합니다.
         if (!stage.required.every(key => {
-          if (key === 'portId') return (props.POE?.multi_select || []).some(item => item.name && selectedPortCode.includes(item.name));
           const [property, kind] = fields[key];
-          return kind === 'select' ? props[property]?.select?.name === values[key]
-            : (props[property]?.multi_select || []).some(item => item.name === values[key]);
+          return (props[property]?.multi_select || []).some(item => (key==='type'?normalizeContainerType(item.name):item.name)===values[key]);
         })) continue;
         if (stage.kind === 'select') {
           const name = props[stage.property]?.select?.name;
