@@ -1,13 +1,8 @@
 /**
- * 20DR/20DRY/20FT는 20FT로 통일하며 숫자 속성 20FT를 사용합니다.
- * DEST_RATE 결과표 전용 백엔드 — dest_table.js
- * 업체는 다중선택 속성으로 읽고, 선택한 업체가 포함된 행만 반환합니다.
- * 대표 DB에서 국가의 타리프 DB를 찾고 도착항구 PORT CODE와 원래 POE를 연결합니다.
- * 지역이 있는 행은 모든 선택 조건을 확인하고, 지역이 빈 행은 공통행으로 처리합니다.
- * 지역이 빈 행은 지역·POE를 면제하며 업체·화물타입·컨테이너 타입은 일치해야 합니다.
- * 기존 costs.js의 직접금액/CBM/최소요금/LOOP/지역·타입·구간 수식 계산을 사용합니다.
- * 참고사항 서식, CDS/ADD/TAX/OTC 구분, 순서, 통화를 반환합니다.
- * 실제 환율 변환 및 추가항목 선택 합계는 프론트 공통 CurrencyConverter/BottomBar가 담당합니다.
+ * DEST_RATE 비용 조회: 지역·업체·화물타입·POE·컨테이너 타입은 각각 독립 조건입니다.
+ * 해당 행의 다중선택 값이 비어 있으면 그 조건만 면제하고, 값이 있으면 일치해야 합니다.
+ * POE는 선택 항구의 전체 PORT CODE 포함 여부로 확인하며 BUS/INC/VIA 태그를 유지합니다.
+ * 업체 다중선택, 20FT 표준화, 기존 금액·수식·통화 처리 및 문서용 공통 선택 함수를 유지합니다.
  */
 const axios = require('axios');
 // 20피트 컨테이너는 조회·응답·계산에서 20FT로 통일합니다.
@@ -418,11 +413,16 @@ async function resolveTariffSelection(query) {
       const portCode=getTitle(port.properties,'PORT CODE');
       const pages=await queryAll(tariffId);
       const matched=pages.filter(page=>{
-        const p=page.properties || {}, regions=getMultiSelectNames(p[REGION_PROP]);
-        return (!regions.length || regions.includes(region)) && getMultiSelectNames(p[COMPANY_PROP]).includes(company)
-          && getMultiSelectNames(p[CARGO_PROP]).includes(cargo)
-          && (!regions.length || getMultiSelectNames(p[POE_PROP]).some(value=>portCode.includes(value)))
-          && getMultiSelectNames(p[CONTAINER_TYPE_PROP]).some(value=>normalizeContainerType(value)===type);
+        const p=page.properties || {};
+        const allows=(property,predicate)=>{
+          const names=getMultiSelectNames(p[property]);
+          return names.length===0 || names.some(predicate);
+        };
+        return allows(REGION_PROP,value=>value===region)
+          && allows(COMPANY_PROP,value=>value===company)
+          && allows(CARGO_PROP,value=>value===cargo)
+          && allows(POE_PROP,value=>portCode.includes(value))
+          && allows(CONTAINER_TYPE_PROP,value=>normalizeContainerType(value)===type);
       });
 
   return {params,master,port,portCode,matched};
