@@ -5,7 +5,8 @@
  * - 국가별 위경도 DB에서 지역명/LAT/LNG를 반환합니다.
  * - 업체는 다중선택 속성입니다. 목록은 모든 업체를 중복 제거하고, 조회는 선택 업체 포함 여부로 판단합니다.
  * - 지역 → 업체 → 화물타입 → POE → 컨테이너타입 순으로 타리프 목록을 조회합니다.
- * - 이전 단계 선택값 모두가 일치하는 행만 사용하며 빈 속성을 공통값으로 포함하지 않습니다.
+ * - 지역·업체·화물·POE·컨테이너의 빈 다중선택은 각각 전체 허용입니다.
+ * - 하위 목록도 같은 규칙으로 검사합니다. 빈 목록 속성은 해당 DB에 등록된 선택 옵션을 펼쳐 제공합니다.
  * - 목록 중복 제거 및 전체 페이지네이션을 처리합니다. POE는 PORT CODE 부분 일치로 항구명에 매핑하며 원래 태그도 보관합니다.
  * - CBM 1~68은 프론트에서 생성합니다. 비용 계산/금액 조회는 아직 구현하지 않습니다.
  */
@@ -107,27 +108,29 @@ module.exports = function registerDestRateRoutes(app) {
         if (!port) return res.status(400).json({ ok: false, error: '선택한 도착항구를 찾을 수 없습니다.' });
         selectedPortCode = rich(port.properties?.['PORT CODE']);
       }
-      const filters = stage.required.filter(key => key !== 'portId').map(key => {
-        const [property, kind] = fields[key];
-        return { property, [kind]: { [kind === 'select' ? 'equals' : 'contains']: values[key] } };
-      });
-      const pages = await queryAll(country.tariffDbId, { filter: { and: filters } });
-      const names = new Set();
+      // Read the tariff once: strict Notion contains filters would exclude empty wildcard rows.
+      const pages = await queryAll(country.tariffDbId);
+      const names = new Set();let wildcard=false;
+      const tags=(props,property)=>(props[property]?.multi_select || []).map(item=>item.name).filter(Boolean);
       for (const page of pages) {
-        const props = page.properties || {};
-        // API 응답에서도 정확한 태그/업체 일치를 확인합니다.
-        if (!stage.required.every(key => {
-          if (key === 'portId') return (props.POE?.multi_select || []).some(item => item.name && selectedPortCode.includes(item.name));
-          const [property, kind] = fields[key];
-          return kind === 'select' ? props[property]?.select?.name === values[key]
-            : (props[property]?.multi_select || []).some(item => item.name === values[key]);
-        })) continue;
-        if (stage.kind === 'select') {
-          const name = props[stage.property]?.select?.name;
-          if (name) names.add(name);
-        } else {
-          for (const item of props[stage.property]?.multi_select || []) if (item.name) names.add(item.name);
-        }
+        const props=page.properties || {};
+        if(!stage.required.every(key=>{
+          const names=tags(props,key==='portId'?'POE':fields[key][0]);
+          if(!names.length)return true;
+          return key==='portId'?names.some(name=>selectedPortCode.includes(name)):names.includes(values[key]);
+        }))continue;
+        const valuesForStage=tags(props,stage.property);
+        if(!valuesForStage.length)wildcard=true;
+        for(const name of valuesForStage)names.add(name);
+      }
+      if(wildcard && req.query.stage!=='poes'){
+        // "All" means all options registered on this tariff property, including unused tags.
+        for(const page of pages)for(const name of tags(page.properties||{},stage.property))names.add(name);
+        const definition=await axios.get(`https://api.notion.com/v1/databases/${country.tariffDbId}`,{headers:headers(),timeout:20000});
+        const property=definition.data.properties?.[stage.property];
+        for(const option of property?.multi_select?.options||[])if(option.name)names.add(option.name);
+        if(!names.size && req.query.stage==='container-types')for(const name of ['20FT','40HC','CONSOLE'])names.add(name);
+        if(!names.size)return res.status(422).json({ok:false,error:`${stage.property} 속성에 선택 옵션을 등록해 주세요. 빈 행은 전체 허용이지만 선택 목록의 이름은 DB에 등록되어 있어야 합니다.`});
       }
       let options;
       if (req.query.stage === 'poes') {
@@ -138,7 +141,7 @@ module.exports = function registerDestRateRoutes(app) {
           const name = title(page.properties?.['PORT NAME']);
           const matchedPoes = [...names].filter(poe => code.includes(poe));
           return { id: page.id, name, portCode: code, matchedPoes };
-        }).filter(item => item.name && item.matchedPoes.length)
+        }).filter(item => item.name && (wildcard || item.matchedPoes.length))
           .sort((a,b) => a.name.localeCompare(b.name,'ko'));
       } else {
         const normalizedNames = req.query.stage === 'container-types' ? new Set([...names].map(normalizeContainerType)) : names;
