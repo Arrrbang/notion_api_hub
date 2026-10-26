@@ -1,4 +1,5 @@
 /**
+ * 20DR/20DRY/20FT는 20FT로 통일하며 숫자 속성 20FT를 사용합니다.
  * DEST_RATE 도착지 조회 백엔드
  * - 대표 DB의 나라명, 타리프 DB ID, 위경도 DB ID를 읽습니다.
  * - 국가별 위경도 DB에서 지역명/LAT/LNG를 반환합니다.
@@ -9,6 +10,12 @@
  * - CBM 1~68은 프론트에서 생성합니다. 비용 계산/금액 조회는 아직 구현하지 않습니다.
  */
 const axios = require('axios');
+// 20피트 컨테이너는 조회·응답·계산에서 20FT로 통일합니다.
+function normalizeContainerType(value) {
+  const type=String(value || '').trim();
+  return ['20FT','20DR','20DRY'].includes(type.toUpperCase()) ? '20FT' : type;
+}
+
 const PORT_DB_ID = '36e0b10191ce804492fce82a1d2719c3';
 const MASTER_DB_ID = '4000b10191ce801c8ed9e2df011bf664';
 const rich = p => (p?.rich_text || []).map(t => t.plain_text ?? t.text?.content ?? '').join('').trim();
@@ -134,7 +141,8 @@ module.exports = function registerDestRateRoutes(app) {
         }).filter(item => item.name && item.matchedPoes.length)
           .sort((a,b) => a.name.localeCompare(b.name,'ko'));
       } else {
-        options = [...names].sort((a,b) => a.localeCompare(b,'ko')).map(name => ({ id: name, name }));
+        const normalizedNames = req.query.stage === 'container-types' ? new Set([...names].map(normalizeContainerType)) : names;
+        options = [...normalizedNames].sort((a,b) => a.localeCompare(b,'ko')).map(name => ({ id: name, name }));
       }
       res.json({ ok: true, stage: req.query.stage, options });
     } catch(e) { fail(res,e,'타리프 선택 목록을 불러오지 못했습니다. DB 권한과 속성을 확인해 주세요.'); }
