@@ -1,0 +1,21 @@
+/** 타리프 결과 행의 페이지 내용 확인, 본문 조회 및 작성자 이름을 포함한 댓글 등록. */
+const axios=require('axios');
+const {resolveTariffSelection,notionHelpers}=require('./dest_table');
+const {lookupOperInfo}=require('../info/oper_info');
+const {notionHeaders,normalizeId}=notionHelpers;
+const API='https://api.notion.com/v1';
+async function get(path,params={}){return (await axios.get(API+path,{headers:notionHeaders(),params,timeout:20000})).data;}
+function substantive(block){
+  if(block.has_children)return true;
+  if(block.type==='paragraph')return (block.paragraph?.rich_text||[]).some(t=>(t.plain_text||t.text?.content||'').trim());
+  return true;
+}
+async function hasContent(id){let cursor;do{const data=await get(`/blocks/${id}/children`,{page_size:100,...(cursor?{start_cursor:cursor}:{})});if((data.results||[]).some(substantive))return true;cursor=data.has_more?data.next_cursor:null;}while(cursor);return false;}
+async function permitted(query,id){const normalized=normalizeId(id);if(!normalized)throw Object.assign(Error('타리프 페이지 ID가 올바르지 않습니다.'),{status:400});const {matched}=await resolveTariffSelection(query);const page=matched.find(p=>normalizeId(p.id)===normalized);if(!page)throw Object.assign(Error('현재 조회 결과에 포함된 비용 항목이 아닙니다.'),{status:404});return page;}
+async function readBody(pageId){let remaining=1500,truncated=false;async function children(id,depth=0){let cursor;const result=[];do{if(!remaining){truncated=true;break;}const data=await get(`/blocks/${id}/children`,{page_size:100,...(cursor?{start_cursor:cursor}:{})});for(const block of data.results||[]){if(!remaining){truncated=true;break;}--remaining;const node={id:block.id,type:block.type,data:block[block.type]||{},children:[]};if(block.has_children&&!['child_page','child_database'].includes(block.type)){if(depth<10)node.children=await children(block.id,depth+1);else truncated=true;}result.push(node);}cursor=data.has_more?data.next_cursor:null;}while(cursor);return result;}const blocks=await children(pageId);return {blocks,truncated};}
+function fail(res,e){console.error('[dest_tariff_details]',e.response?.status||e.code||e.message);res.status(e.status||(e.response?.status===403?403:500)).json({ok:false,error:e.status?e.message:e.response?.status===403?'노션 페이지나 댓글 접근 권한을 확인해 주세요.':'상세 내용을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.'});}
+module.exports=function registerDestTariffDetails(app){
+ app.post('/api/dest-rate/tariff-details/check',async(req,res)=>{try{res.set('Cache-Control','no-store');const {matched}=await resolveTariffSelection(req.body?.selection||{});let index=0;const results={};await Promise.all(Array.from({length:Math.min(6,matched.length)},async()=>{while(index<matched.length){const page=matched[index++];try{results[page.id]=await hasContent(page.id);}catch(e){console.error('[tariff-detail check]',e.response?.status||e.message);results[page.id]=null;}}}));res.json({ok:true,results});}catch(e){fail(res,e);}});
+ app.get('/api/dest-rate/tariff-details/:pageId',async(req,res)=>{try{res.set('Cache-Control','no-store');const page=await permitted(req.query,req.params.pageId);res.json({ok:true,document:{id:page.id,url:page.url||`https://www.notion.so/${normalizeId(page.id)}`},...await readBody(page.id)});}catch(e){fail(res,e);}});
+ app.post('/api/dest-rate/tariff-details/:pageId/comments',async(req,res)=>{try{res.set('Cache-Control','no-store');const text=typeof req.body?.text==='string'?req.body.text.trim():'';const username=typeof req.body?.username==='string'?req.body.username.trim():'';if(!text||text.length>10000)return res.status(400).json({ok:false,error:'댓글을 1~10,000자로 입력해 주세요.'});if(!username||username.length>100||/[\r\n]/.test(username))return res.status(400).json({ok:false,error:'로그인 아이디를 확인해 주세요.'});const page=await permitted(req.body?.selection||{},req.params.pageId);const author=await lookupOperInfo(username);let chunk='';const rich_text=[];for(const char of `[${author.korean_name}]\n${text}`){if(chunk.length+char.length>2000){rich_text.push({type:'text',text:{content:chunk}});chunk='';}chunk+=char;}if(chunk)rich_text.push({type:'text',text:{content:chunk}});const {data}=await axios.post(`${API}/comments`,{parent:{page_id:page.id},rich_text},{headers:notionHeaders(),timeout:20000});res.json({ok:true,author:{pass_id:author.pass_id,korean_name:author.korean_name},comment:{id:data.id}});}catch(e){fail(res,e);}});
+};
