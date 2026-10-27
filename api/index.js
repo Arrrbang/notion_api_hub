@@ -29,6 +29,7 @@ const registerQuotationSaveLoadRoutes = require('./quotation/saveload');
 const registerBookingPartnerRoutes = require("./mail/booking-partners");
 const registerPartnerRegionsRoutes = require("./account/getPartnerRegions");
 const registerRateSearchRoutes = require("./rate/ratesearch");
+const registerDestTariffDetails = require('./destination/dest_tariff_details');
 
 const registerDestRateRoutes = require("./destination/dest_rate");
 const registerDestTableRoutes = require("./destination/dest_table");
@@ -165,6 +166,7 @@ registerDestDocumentsRoutes(app);
 registerRateRequestRoutes(app);
 
 registerUserInfoRoutes(app);
+registerDestTariffDetails(app);
 /* ─────────────────────────────────────────────────────────
    Export (Vercel @vercel/node)
 ────────────────────────────────────────────────────────── */
