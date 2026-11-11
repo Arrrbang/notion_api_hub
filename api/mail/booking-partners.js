@@ -37,7 +37,7 @@ const PROP_PARTNER_RELATION = "파트너 연결";
 
 const PROP_INFO_TITLE = "이름";
 const PROP_DOC_TYPE = "문서타입";
-const DOC_TYPES = ["선 사 관 련", "선 사 정 보", "부 킹 정 보"];
+const DOC_TYPES = ["선 사 정 보", "부 킹 정 보"];
 const PROP_DOC_UPDATED = "업데이트일자";
 
 // =====================================================
