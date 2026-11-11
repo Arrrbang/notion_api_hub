@@ -12,7 +12,7 @@ const PARTNER_DB_ID =
 const PARTNER_INFO_DB_ID =
   "34a0b10191ce80c3b3aefd1fabbcbd55";
 
-// 선사 관련 문서 DB
+// 선사·부킹 관련 문서 DB
 const PARTNER_DOC_DB_ID =
   "34a0b10191ce800988a9dd777d4dc05c";
 
@@ -37,7 +37,7 @@ const PROP_PARTNER_RELATION = "파트너 연결";
 
 const PROP_INFO_TITLE = "이름";
 const PROP_DOC_TYPE = "문서타입";
-const DOC_TYPE_VALUE = "선 사 관 련";
+const DOC_TYPES = ["선 사 관 련", "선 사 정 보", "부 킹 정 보"];
 const PROP_DOC_UPDATED = "업데이트일자";
 
 // =====================================================
@@ -382,13 +382,12 @@ async function getCountryDocumentIds(partnerId) {
   return [...documentIds.values()];
 }
 
-// 표시 가능한 선사 관련 문서인지 확인
+// 표시 가능한 선사·부킹 관련 문서인지 확인
 function isCarrierDocument(page) {
   return (
     normalizePageId(page.parent?.database_id) ===
       normalizePageId(PARTNER_DOC_DB_ID) &&
-    page.properties?.[PROP_DOC_TYPE]?.select?.name ===
-      DOC_TYPE_VALUE &&
+    DOC_TYPES.includes(page.properties?.[PROP_DOC_TYPE]?.select?.name) &&
     !page.archived &&
     !page.in_trash
   );
@@ -428,6 +427,7 @@ function documentSummary(page) {
 
   return {
     id: page.id,
+    documentType: page.properties?.[PROP_DOC_TYPE]?.select?.name || "",
     title:
       getTitle(page.properties || {}) || "제목 없음",
     url: page.url || "",
@@ -719,7 +719,7 @@ function registerPartnerDocumentRoutes(app) {
   // 1. 선택한 파트너에 직접 연결된 문서
   // 2. 파트너의 국가 → 국가별 공지사항 연결 문서
   //
-  // 위 두 결과를 합친 후 "선 사 관 련"만 표시
+  // 위 두 결과를 합친 후 선사 정보와 부킹 정보만 표시
   // ---------------------------------------------------
 
   app.get(
@@ -735,7 +735,7 @@ function registerPartnerDocumentRoutes(app) {
       }
 
       try {
-        // 파트너에 직접 연결된 선사 관련 문서
+        // 파트너에 직접 연결된 선사·부킹 관련 문서
         const partnerDocuments = await queryDatabase(
           PARTNER_DOC_DB_ID,
           {
@@ -748,10 +748,10 @@ function registerPartnerDocumentRoutes(app) {
                   }
                 },
                 {
-                  property: PROP_DOC_TYPE,
-                  select: {
-                    equals: DOC_TYPE_VALUE
-                  }
+                  or: DOC_TYPES.map(type => ({
+                    property: PROP_DOC_TYPE,
+                    select: { equals: type }
+                  }))
                 }
               ]
             }
@@ -793,7 +793,7 @@ function registerPartnerDocumentRoutes(app) {
             throw error;
           }
 
-          // 지정된 문서 DB의 선사 관련 문서만 수집
+          // 지정된 문서 DB의 선사·부킹 관련 문서만 수집
           if (!isCarrierDocument(page)) continue;
 
           // 국가로 추가하는 문서는 파트너 연결이 비어 있어야 함
