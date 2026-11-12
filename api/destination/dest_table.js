@@ -425,13 +425,13 @@ async function resolveTariffSelection(query) {
           && allows(CONTAINER_TYPE_PROP,value=>normalizeContainerType(value)===type);
       });
 
-  return {params,master,port,portCode,matched};
+  return {params,master,port,portCode,matched,tariffId};
 }
 module.exports = function registerDestTableRoutes(app) {
   app.get('/api/dest-rate/table', async (req,res) => {
     try {
       res.set('Cache-Control','no-store');
-      const {params,master,port,portCode,matched}=await resolveTariffSelection(req.query);
+      const {params,master,port,portCode,matched,tariffId}=await resolveTariffSelection(req.query);
       const {region,company,cargo,type}=params;
       const cbm=Number(params.cbm);
       const rows=matched.map(page=>{
@@ -444,8 +444,16 @@ module.exports = function registerDestTableRoutes(app) {
       const currencies=[...new Set(rows.filter(r=>Number.isFinite(r[type])&&!['TAX','OTC'].includes(r.rowType.toUpperCase())).map(r=>r.currency).filter(Boolean))];
       if(currencies.length>1) return res.status(422).json({ok:false,error:`서로 다른 통화(${currencies.join(', ')})의 비용이 포함되어 있습니다. 타리프 통화를 통일해 주세요.`});
       const currency=currencies[0] || rows.find(r=>r.currency)?.currency || 'USD';
+      let tariffDescription='', tariffDescriptionUnavailable=false;
+      try {
+        const {data}=await axios.get(`https://api.notion.com/v1/databases/${tariffId}`,{headers:notionHeaders(),timeout:5000});
+        tariffDescription=(Array.isArray(data.description)?data.description:[]).map(item=>item.plain_text ?? item.text?.content ?? '').join('');
+      } catch(error) {
+        tariffDescriptionUnavailable=true;
+        console.error('[dest_table description]',error.response?.status || error.code || error.message);
+      }
       res.json({ok:true,country:getTitle(master.properties,'나라명'),region,company,cargo,
-        poe:getTitle(port.properties,'PORT NAME'),portCode,type,cbm,rows,currency});
+        poe:getTitle(port.properties,'PORT NAME'),portCode,type,cbm,rows,currency,tariffDescription,tariffDescriptionUnavailable});
     } catch(e) {
       console.error('[dest_table]',e.response?.status||e.code||e.message);
       res.status(e.status || 500).json({ok:false,error:e.status ? e.message : '비용 조회에 실패했습니다. DB 권한과 속성 및 계산식을 확인해 주세요.'});
