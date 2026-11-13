@@ -1,6 +1,6 @@
 'use strict';
 const splitCodes = value => [...new Set(String(value || '').split(',').map(v => v.trim()).filter(Boolean))];
-const baseCode = value => String(value || '').trim().replace(/^\((?:BUS|INC)\)\s*/i, '').replace(/\s+/g, '').toUpperCase();
+const baseCode = value => String(value || '').trim().replace(/^\((?:BUS|INC)\)\s*/i, '').toUpperCase();
 function readPort(properties = {}) {
   const raw = (properties['PORT CODE']?.rich_text || []).map(x => x.plain_text ?? x.text?.content ?? '').join('');
   const originalCodes = splitCodes(raw);
@@ -10,5 +10,5 @@ function readPort(properties = {}) {
   const rateCodes = pols.flatMap(pol => codes.map(code => `(${pol})${code}`));
   return { baseCodes: codes, pols, rateCodes, rawCode: raw };
 }
-const matchesPoe = (codes, poe) => codes.some(code => baseCode(code) === baseCode(poe));
+const matchesPoe = (codes, poe) => codes.some(code => baseCode(code).replace(/\s+/g, '') === baseCode(poe).replace(/\s+/g, ''));
 module.exports = { splitCodes, baseCode, readPort, matchesPoe };
