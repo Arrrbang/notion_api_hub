@@ -1,3 +1,4 @@
+const { readPort, matchesPoe } = require('../shared/ports');
 /**
  * 20DR/20DRY/20FT는 20FT로 통일하며 숫자 속성 20FT를 사용합니다.
  * DEST_RATE 도착지 조회 백엔드 — 드롭다운은 기존의 정확 일치 조건을 사용합니다.
@@ -128,10 +129,10 @@ module.exports = function registerDestRateRoutes(app) {
         // 문자열 그대로 부분 일치. (BUS), (INC), (VIA LA) 등은 제거하지 않습니다.
         // USATL은 (BUS)USATL(VIA SAV)와 (BUS)USATL(VIA LA) 모두와 일치합니다.
         options = (await queryAll(PORT_DB_ID)).map(page => {
-          const code = rich(page.properties?.['PORT CODE']);
+          const port = readPort(page.properties);
           const name = title(page.properties?.['PORT NAME']);
-          const matchedPoes = [...names].filter(poe => code.includes(poe));
-          return { id: page.id, name, portCode: code, matchedPoes };
+          const matchedPoes = [...names].filter(poe => matchesPoe(port.baseCodes, poe));
+          return { id: page.id, name, portCode: port.rawCode, baseCodes: port.baseCodes, pols: port.pols, rateCodes: port.rateCodes, matchedPoes };
         }).filter(item => item.name && item.matchedPoes.length)
           .sort((a,b) => a.name.localeCompare(b.name,'ko'));
       } else {

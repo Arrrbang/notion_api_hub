@@ -1,3 +1,4 @@
+const { readPort } = require('../shared/ports');
 // api/ofc/ofc-costs.js
 const axios = require("axios");
 
@@ -55,11 +56,7 @@ module.exports = function registerPoeCostsRoutes(app) {
       if (mappingResp.data.results && mappingResp.data.results.length > 0) {
         // ✅ 개선점: 검색된 모든 results를 순회하며 PORT CODE를 전부 수집함
         mappingResp.data.results.forEach(result => {
-          const rawCodes = richTextToPlain(result.properties["PORT CODE"]?.rich_text || []);
-          if (rawCodes) {
-            const codes = rawCodes.split(",").map(code => code.trim().toUpperCase()).filter(code => code.length > 0);
-            targetPoes.push(...codes);
-          }
+          targetPoes.push(...readPort(result.properties).rateCodes);
         });
         
         // ✅ 중복된 코드가 들어가는 것을 방지하기 위해 Set을 사용하여 고유값만 남김
@@ -122,7 +119,8 @@ module.exports = function registerPoeCostsRoutes(app) {
         const props = page.properties;
         return {
           id: page.id,
-          name: richTextToPlain(props["항목명"]?.title || []), 
+          name: richTextToPlain(props["항목명"]?.title || []),
+          poeList: getMultiSelectNames(props["POE"]), 
           cost20: Math.round(props["20DR"]?.number || 0),
           cost40: Math.round(props["40HC"]?.number || 0),
           costCONSOLE: Math.round(props["CONSOLE"]?.number || 0)

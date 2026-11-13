@@ -1,3 +1,4 @@
+const { readPort } = require('../shared/ports');
 const axios = require("axios");
 
 // =====================================================
@@ -202,22 +203,17 @@ module.exports = function registerMailBookingRoutes(app) {
             props[PROP_PORT_NAME]
           ).trim();
 
-          // PORT CODE는 쉼표로 분리하고 중복 제거
-          const codes = [
-            ...new Set(
-              getRichText(props[PROP_PORT_CODE])
-                .split(",")
-                .map(code => code.trim())
-                .filter(Boolean)
-            )
-          ];
+          const port = readPort(props);
+          const codes = port.rateCodes;
 
           return {
             id: page.id,
             code: codes.join(","),
             codes,
+            baseCodes: port.baseCodes,
+            pols: port.pols,
             name,
-            label: name
+            label: name + (port.pols.length ? ` (POL: ${port.pols.map(pol => pol === "BUS" ? "BUSAN" : "INCHEON").join(" / ")})` : "")
           };
         })
         .filter(item => item.name && item.codes.length)
@@ -552,6 +548,7 @@ app.get(
 
         return {
           id: page.id,
+          poeList: getMultiSelectNames(props[PROP_POE]),
 
           forwarder:
             props["포워딩"]?.select?.name || "-",

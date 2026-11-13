@@ -1,3 +1,4 @@
+const { readPort } = require('../shared/ports');
 /**
  * 국가별 타리프 DB의 지역 다중선택과 POE를 묶는 API를 제공합니다.
  * 기존 API 호환 유지: 배송지역을 쉼표로 분리하고 같은 지역 행의 POE를 합칩니다.
@@ -73,7 +74,7 @@ module.exports = function registerRateSearchRoutes(app) {
       const definitions = [{key:'dr20',name:'20DRY',id:'3790b10191ce8030932bfc233c74af8a'},{key:'hc40',name:'40HC',id:'3790b10191ce805ca871fc6cf2bc2dba'}];
       const containers = await Promise.all(definitions.map(async definition => {
         const rows = await queryAll(definition.id,{sorts:[{property:'기간',direction:'ascending'}]});
-        return {key:definition.key,name:definition.name,series:ports.flatMap(port=>splitCodes(text(port.properties?.['PORT CODE'])).map(code=>({
+        return {key:definition.key,name:definition.name,series:ports.flatMap(port=>readPort(port.properties).rateCodes.map(code=>({
           portId:port.id,name:title(port.properties?.['PORT NAME']),code,
           points:rows.map(row=>{
             const value=historyValue(row.properties, code);
@@ -140,8 +141,9 @@ module.exports = function registerRateSearchRoutes(app) {
       const pages = await queryAll(PORT_CODE_DB_ID);
       const options = pages.map(page => {
         const name = title(page.properties?.["PORT NAME"]).trim();
-        const codes = splitCodes(text(page.properties?.["PORT CODE"]));
-        return { id: page.id, value: page.id, name, label: name, code: codes.join(","), codes };
+        const port = readPort(page.properties);
+        const codes = port.rateCodes;
+        return { id: page.id, value: page.id, name, label: name, code: codes.join(","), codes, baseCodes:port.baseCodes, pols:port.pols };
       }).filter(item => item.name).sort((a, b) => a.name.localeCompare(b.name, "ko"));
       // PORT CODE가 없어도 PORT NAME이 있으면 목록에 표시합니다.
       res.json({ ok: true, options });

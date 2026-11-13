@@ -1,3 +1,4 @@
+const { readPort, matchesPoe } = require('../shared/ports');
 /**
  * DEST_RATE 비용 조회: 지역·업체·화물타입·POE·컨테이너 타입은 각각 독립 조건입니다.
  * 해당 행의 다중선택 값이 비어 있으면 그 조건만 면제하고, 값이 있으면 일치해야 합니다.
@@ -410,7 +411,8 @@ async function resolveTariffSelection(query) {
       if(!tariffId) throw Object.assign(new Error('타리프 DB ID를 확인해 주세요.'),{status:422});
       const port=(await queryAll(PORT_ID)).find(p=>normalizeId(p.id)===normalizeId(portId));
       if(!port) throw Object.assign(new Error('도착항구를 찾지 못했습니다.'),{status:404});
-      const portCode=getTitle(port.properties,'PORT CODE');
+      const portInfo=readPort(port.properties);
+      const portCode=portInfo.rateCodes.join(',');
       const pages=await queryAll(tariffId);
       const matched=pages.filter(page=>{
         const p=page.properties || {};
@@ -421,17 +423,17 @@ async function resolveTariffSelection(query) {
         return allows(REGION_PROP,value=>value===region)
           && allows(COMPANY_PROP,value=>value===company)
           && allows(CARGO_PROP,value=>value===cargo)
-          && allows(POE_PROP,value=>portCode.includes(value))
+          && allows(POE_PROP,value=>matchesPoe(portInfo.baseCodes,value))
           && allows(CONTAINER_TYPE_PROP,value=>normalizeContainerType(value)===type);
       });
 
-  return {params,master,port,portCode,matched,tariffId};
+  return {params,master,port,portCode,portInfo,matched,tariffId};
 }
 module.exports = function registerDestTableRoutes(app) {
   app.get('/api/dest-rate/table', async (req,res) => {
     try {
       res.set('Cache-Control','no-store');
-      const {params,master,port,portCode,matched,tariffId}=await resolveTariffSelection(req.query);
+      const {params,master,port,portCode,portInfo,matched,tariffId}=await resolveTariffSelection(req.query);
       const {region,company,cargo,type}=params;
       const cbm=Number(params.cbm);
       const rows=matched.map(page=>{
@@ -453,7 +455,7 @@ module.exports = function registerDestTableRoutes(app) {
         console.error('[dest_table description]',error.response?.status || error.code || error.message);
       }
       res.json({ok:true,country:getTitle(master.properties,'나라명'),region,company,cargo,
-        poe:getTitle(port.properties,'PORT NAME'),portCode,type,cbm,rows,currency,tariffDescription,tariffDescriptionUnavailable});
+        poe:getTitle(port.properties,'PORT NAME'),portCode,baseCodes:portInfo.baseCodes,pols:portInfo.pols,type,cbm,rows,currency,tariffDescription,tariffDescriptionUnavailable});
     } catch(e) {
       console.error('[dest_table]',e.response?.status||e.code||e.message);
       res.status(e.status || 500).json({ok:false,error:e.status ? e.message : '비용 조회에 실패했습니다. DB 권한과 속성 및 계산식을 확인해 주세요.'});
