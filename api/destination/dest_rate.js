@@ -1,4 +1,4 @@
-const { readPort, matchesPoe } = require('../shared/ports');
+const { readPort, matchesPoe, destinationOnly } = require('../shared/ports');
 /**
  * 20DR/20DRY/20FT는 20FT로 통일하며 숫자 속성 20FT를 사용합니다.
  * DEST_RATE 도착지 조회 백엔드 — 드롭다운은 기존의 정확 일치 조건을 사용합니다.
@@ -128,13 +128,17 @@ module.exports = function registerDestRateRoutes(app) {
       if (req.query.stage === 'poes') {
         // 문자열 그대로 부분 일치. (BUS), (INC), (VIA LA) 등은 제거하지 않습니다.
         // USATL은 (BUS)USATL(VIA SAV)와 (BUS)USATL(VIA LA) 모두와 일치합니다.
-        options = (await queryAll(PORT_DB_ID)).map(page => {
+        const candidates = (await queryAll(PORT_DB_ID)).map(page => {
           const port = readPort(page.properties);
           const name = title(page.properties?.['PORT NAME']);
           const matchedPoes = [...names].filter(poe => matchesPoe(port.baseCodes, poe));
-          return { id: page.id, name, portCode: port.rawCode, baseCodes: port.baseCodes, pols: port.pols, rateCodes: port.rateCodes, matchedPoes };
-        }).filter(item => item.name && item.matchedPoes.length)
-          .sort((a,b) => a.name.localeCompare(b.name,'ko'));
+          return { id: page.id, name, portCode: port.rawCode, baseCodes: port.baseCodes, pols: port.pols, rateCodes: port.rateCodes, matchedPoes, destinationOnly: destinationOnly(page) };
+        }).filter(item => item.name && item.matchedPoes.length);
+        // POE별로 후보가 여러 개면 체크된 항구만 사용합니다. 하나뿐이면 체크 여부와 무관합니다.
+        const counts = new Map();
+        for (const option of candidates) for (const poe of option.matchedPoes) counts.set(poe, (counts.get(poe) || 0) + 1);
+        options = candidates.map(item => ({...item, matchedPoes:item.matchedPoes.filter(poe => counts.get(poe) === 1 || item.destinationOnly)}))
+          .filter(item => item.matchedPoes.length).sort((a,b) => a.name.localeCompare(b.name,'ko'));
       } else {
         const normalizedNames = req.query.stage === 'container-types' ? new Set([...names].map(normalizeContainerType)) : names;
         options = [...normalizedNames].sort((a,b) => a.localeCompare(b,'ko')).map(name => ({ id: name, name }));

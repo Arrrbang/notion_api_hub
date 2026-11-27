@@ -1,4 +1,4 @@
-const { readPort } = require('../shared/ports');
+const { readPort, ratePorts } = require('../shared/ports');
 /**
  * 국가별 타리프 DB의 지역 다중선택과 POE를 묶는 API를 제공합니다.
  * 기존 API 호환 유지: 배송지역을 쉼표로 분리하고 같은 지역 행의 POE를 합칩니다.
@@ -138,7 +138,7 @@ module.exports = function registerRateSearchRoutes(app) {
 
   app.get("/api/rate-search/arrival-ports", async (req, res) => {
     try {
-      const pages = await queryAll(PORT_CODE_DB_ID);
+      const pages = ratePorts(await queryAll(PORT_CODE_DB_ID));
       const options = pages.map(page => {
         const name = title(page.properties?.["PORT NAME"]).trim();
         const port = readPort(page.properties);
