@@ -13,4 +13,19 @@ const pageTitle=p=>text(Object.values(p.properties||{}).find(x=>x.type==='title'
 module.exports=app=>{
  app.get('/api/us-partner-mail/customers',async(req,res)=>{try{const q=String(req.query.q||'').trim();if(!q||q.length>100)return res.status(400).json({ok:false,error:'고객명을 입력해 주세요.'});const pages=await query(CUSTOMER_DB,{filter:{and:[{property:'고객명',title:{contains:q}},{property:'국가',select:{equals:'미국 USA'}}]}});const names=[...new Set(pages.map(p=>p.properties?.['영업담당']?.select?.name).filter(Boolean))];const emails=new Map(await Promise.all(names.map(async name=>{const users=await query(EMPLOYEE_DB,{filter:{property:'한글명',rich_text:{equals:name}}});return [name,users.length===1?text(users[0].properties?.['E-MAIL']):''];})));res.set('Cache-Control','no-store');res.json({ok:true,options:pages.map(p=>{const prop=p.properties||{},sales=prop['영업담당']?.select?.name||'';return{id:p.id,name:text(prop['고객명']),poe:prop['POE']?.select?.name||'',packing:prop['포장일']?.date?.start||'',etd:prop.ETD?.date?.start||'',eta:prop.ETA?.date?.start||'',sales,salesEmail:emails.get(sales)||''};}).filter(x=>x.name)});}catch(e){console.error('[us-mail customers]',e.response?.status||e.message);res.status(500).json({ok:false,error:'고객 및 담당자 정보를 불러오지 못했습니다. 노션 DB 속성과 접근 권한을 확인해 주세요.'});}});
  app.get('/api/us-partner-mail/partners',async(req,res)=>{try{const pages=await query(PARTNER_DB);const pairs=await Promise.all(pages.map(async p=>[p,await relations(p,'국가')]));const ids=[...new Set(pairs.flatMap(x=>x[1]))],countries=new Map();let cursor=0;await Promise.all(Array.from({length:Math.min(5,ids.length)},async()=>{while(cursor<ids.length){const id=ids[cursor++];const {data}=await axios.get(`${API}/pages/${id}`,{headers:headers(),timeout:20000});countries.set(id,pageTitle(data));}}));const options=pairs.filter(([,ids])=>ids.some(id=>countries.get(id)==='미국')).map(([p])=>({id:p.id,name:text(p.properties?.['이름']),email:p.properties?.['담당자 이메일']?.email||''})).filter(x=>x.name).sort((a,b)=>a.name.localeCompare(b.name,'ko'));res.set('Cache-Control','no-store');res.json({ok:true,options});}catch(e){console.error('[us-mail partners]',e.response?.status||e.message);res.status(500).json({ok:false,error:'미국 파트너 목록을 불러오지 못했습니다. 국가 관계형 페이지의 접근 권한을 확인해 주세요.'});}});
+ // 선택된 고객이 지정된 고객 DB에 속하는지 확인한 뒤 POA 완료를 표시합니다.
+ app.post('/api/us-partner-mail/poa-complete',async(req,res)=>{
+  const ids=req.body?.customerIds;
+  if(!Array.isArray(ids)||ids.length<1||ids.length>3||ids.some(id=>typeof id!=='string'||!/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(id)))return res.status(400).json({ok:false,error:'고객 ID를 확인해 주세요.'});
+  const unique=[...new Set(ids)];
+  const results=await Promise.all(unique.map(async id=>{try{
+   const {data:page}=await axios.get(`${API}/pages/${id}`,{headers:headers(),timeout:20000});
+   const db=(page.parent?.database_id||'').replace(/-/g,'').toLowerCase();
+   if(db!==CUSTOMER_DB||page.properties?.['국가']?.select?.name!=='미국 USA')throw Error('고객 DB 또는 국가 불일치');
+   await axios.patch(`${API}/pages/${id}`,{properties:{'POA 완료':{checkbox:true}}},{headers:headers(),timeout:20000});
+   return {id,ok:true};
+  }catch(e){console.error('[us-mail poa-complete]',id,e.response?.status||e.message);return {id,ok:false};}}));
+  res.json({ok:results.every(x=>x.ok),results});
+ });
+
 };
